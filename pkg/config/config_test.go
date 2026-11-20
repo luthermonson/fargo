@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,4 +59,43 @@ func TestKineToken(t *testing.T) {
 	if err != nil || tok != "s3cret" {
 		t.Fatalf("token = %q err = %v", tok, err)
 	}
+}
+
+func TestLogFieldsRedactsToken(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "token")
+	if err := os.WriteFile(p, []byte("hunter2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := Config{Mode: ModeArgo, KineEndpoint: "http://k:2381", KineTokenFile: p, HealthDeadline: 10 * time.Minute}
+	fields := c.LogFields()
+	joined := ""
+	for _, f := range fields {
+		joined += " " + toString(f)
+	}
+	if strings.Contains(joined, "hunter2") {
+		t.Fatalf("token leaked into log fields: %s", joined)
+	}
+	for _, want := range []string{"(set: " + p + ")", "10m0s", "(in-cluster)", "http://k:2381"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("log fields missing %q: %s", want, joined)
+		}
+	}
+	empty := Config{}
+	if empty.LogFields()[11] != "(none)" {
+		t.Errorf("empty token file should log as (none): %v", empty.LogFields())
+	}
+}
+
+func toString(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case bool:
+		if t {
+			return "true"
+		}
+		return "false"
+	}
+	return ""
 }

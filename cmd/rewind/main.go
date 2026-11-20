@@ -85,6 +85,6 @@ func run(c *cli.Context) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	log.Info("rewind starting", "version", version.Version, "mode", cfg.Mode, "kineEndpoint", cfg.KineEndpoint, "dryRun", cfg.DryRun)
+	log.Info("rewind starting", append([]any{"version", version.Version}, cfg.LogFields()...)...)
 	return ctrl.Run(ctx)
 }

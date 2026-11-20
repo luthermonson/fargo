@@ -196,12 +196,14 @@ func (c *Controller) runInformers(ctx context.Context) error {
 	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(
 		c.mgmt, 10*time.Minute, c.cfg.Namespace, nil)
 
+	informers := map[schema.GroupVersionResource]cache.SharedIndexInformer{}
 	for _, gvr := range c.mapper.Resources() {
 		inf := factory.ForResource(gvr).Informer()
 		_, err := inf.AddEventHandler(c.handlersFor(ctx))
 		if err != nil {
 			return fmt.Errorf("add informer for %s: %w", gvr, err)
 		}
+		informers[gvr] = inf
 	}
 
 	c.log.Info("starting informers", "mode", c.cfg.Mode, "resources", gvrNames(c.mapper.Resources()), "dryRun", c.cfg.DryRun)
@@ -211,6 +213,11 @@ func (c *Controller) runInformers(ctx context.Context) error {
 		if !ok {
 			return fmt.Errorf("informer cache for %s failed to sync", gvr)
 		}
+	}
+	// Say what the management cluster holds, so a misconfigured kubeconfig or
+	// context is obvious at startup rather than at the first rollout.
+	for gvr, inf := range informers {
+		c.log.Info("informer synced", "resource", gvr.String(), "objects", len(inf.GetStore().ListKeys()))
 	}
 	<-ctx.Done()
 	return nil

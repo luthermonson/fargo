@@ -81,6 +81,41 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// LogFields renders the effective configuration as slog key/value pairs for
+// the startup log. Paths are shown, the token itself never is: the token file
+// appears as "(set)" / "(none)".
+func (c *Config) LogFields() []any {
+	tok := "(none)"
+	if strings.TrimSpace(c.KineTokenFile) != "" {
+		tok = "(set: " + c.KineTokenFile + ")"
+	}
+	mgmt := c.ManagementKubeconfig
+	if mgmt == "" {
+		mgmt = "(in-cluster)"
+	}
+	target := c.TargetKubeconfig
+	if target == "" {
+		target = "(in-cluster)"
+	}
+	ns := c.Namespace
+	if ns == "" {
+		ns = "(all)"
+	}
+	return []any{
+		"mode", string(c.Mode),
+		"managementKubeconfig", mgmt,
+		"managementContext", c.ManagementContext,
+		"targetKubeconfig", target,
+		"kineEndpoint", c.KineEndpoint,
+		"kineToken", tok,
+		"healthDeadline", c.HealthDeadline.String(),
+		"namespaceScope", string(c.NamespaceScope),
+		"namespace", ns,
+		"dryRun", c.DryRun,
+		"leaderElect", c.LeaderElect,
+	}
+}
+
 // NeedsTargetCluster reports whether this mode must talk to the target cluster
 // (for kind->resource discovery). crd scopes are already fully-formed keys.
 func (c Config) NeedsTargetCluster() bool {
