@@ -11,6 +11,8 @@
 package argo
 
 import (
+	"time"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -67,6 +69,13 @@ func (m *Mapper) Classify(obj *unstructured.Unstructured) (reconcile.Signal, err
 		}
 		return reconcile.Signal{Kind: reconcile.SignalStarted, ID: id, Ref: ref, Scope: scope}, nil
 	case "Succeeded":
+		// status.health is only trustworthy once Argo has reconciled AFTER the
+		// operation finished: until then it is the pre-sync health (often
+		// Healthy from the previous rollout), and acting on it commits a
+		// rollout whose objects have not even been evaluated yet.
+		if !healthEvaluatedAfterSync(obj) {
+			return reconcile.Signal{Kind: reconcile.SignalInProgress, ID: id, Ref: ref}, nil
+		}
 		health, _, _ := unstructured.NestedString(obj.Object, "status", "health", "status")
 		switch health {
 		case "Healthy":
@@ -117,6 +126,35 @@ func (m *Mapper) scope(obj *unstructured.Unstructured) (txn.Scope, error) {
 	// whose own keys are not in the Application's resource list.
 	b.ExpandOwners(true)
 	return b.Build(), nil
+}
+
+// healthEvaluatedAfterSync reports whether the Application's health and sync
+// status were computed by a reconcile that ran after the sync operation
+// finished: status.reconciledAt >= operationState.finishedAt, and the synced
+// revision is the operation's revision. Objects without those timestamps
+// (older Argo, fixtures) are taken at face value.
+func healthEvaluatedAfterSync(obj *unstructured.Unstructured) bool {
+	finished, fok, _ := unstructured.NestedString(obj.Object, "status", "operationState", "finishedAt")
+	reconciled, rok, _ := unstructured.NestedString(obj.Object, "status", "reconciledAt")
+	if !fok || !rok || finished == "" || reconciled == "" {
+		return true
+	}
+	ft, err1 := time.Parse(time.RFC3339, finished)
+	rt, err2 := time.Parse(time.RFC3339, reconciled)
+	if err1 != nil || err2 != nil {
+		return true
+	}
+	if rt.Before(ft) {
+		return false
+	}
+	// The synced revision must be the one the operation applied; a stale
+	// comparison would otherwise describe the previous rollout.
+	opRev := syncRevision(obj)
+	syncedRev, _, _ := unstructured.NestedString(obj.Object, "status", "sync", "revision")
+	if opRev != "" && syncedRev != "" && syncedRev != opRev {
+		return false
+	}
+	return true
 }
 
 func syncRevision(obj *unstructured.Unstructured) string {

@@ -81,8 +81,9 @@ Watches `applications.argoproj.io/v1alpha1` on the management cluster.
 | Event | Trigger |
 |-------|---------|
 | begin | `status.operationState.phase == Running` with a sync operation set |
-| commit | `phase == Succeeded` **and** `status.health.status == Healthy` within `--health-deadline` |
-| rollback | `phase == Failed`/`Error`, `health == Degraded`, or the deadline |
+| commit | `phase == Succeeded` **and** `status.health.status == Healthy` within `--health-deadline`, where the health comes from a reconcile that ran *after* the operation finished (`status.reconciledAt >= operationState.finishedAt`, synced revision = operation revision); the pre-sync health is never trusted |
+| rollback | `phase == Failed`/`Error`, `health == Degraded` (same freshness rule), or the deadline |
+| in progress | `phase == Succeeded` with any other (or stale) health: no action, but after a controller restart the open transaction is re-adopted from the ledger and its deadline re-armed |
 
 Scope comes from `status.resources[]` (each `group`, `kind`→resource via the
 target cluster's discovery, `namespace`, `name`), plus `spec.destination.namespace`

@@ -157,3 +157,44 @@ func TestArgoRunningWithoutSyncIsNone(t *testing.T) {
 		t.Fatalf("Running without a sync operation should be None, got %v", sig.Kind)
 	}
 }
+
+func TestArgoStaleHealthAfterSyncIsInProgress(t *testing.T) {
+	m := argo.New(fakeResolver{}, modes.NamespaceScopeAuto)
+	// The operation finished at :39 but the last reconcile ran at :10, so the
+	// Healthy status is the previous rollout's. Must not commit.
+	stale := fromJSON(t, `{
+      "metadata": {"name": "podinfo", "namespace": "argocd"},
+      "status": {
+        "operationState": {"phase": "Succeeded", "finishedAt": "2026-11-20T02:53:39Z", "operation": {"sync": {"revision": "r2"}}},
+        "reconciledAt": "2026-11-20T02:53:10Z",
+        "sync": {"status": "Synced", "revision": "r1"},
+        "health": {"status": "Healthy"}}}`)
+	sig, _ := m.Classify(stale)
+	if sig.Kind != reconcile.SignalInProgress || sig.ID != "argo/argocd/podinfo/r2" {
+		t.Fatalf("stale Healthy after sync should be in progress, got %v %q", sig.Kind, sig.ID)
+	}
+	// Reconciled after the operation, for the operation's revision: trusted.
+	fresh := fromJSON(t, `{
+      "metadata": {"name": "podinfo", "namespace": "argocd"},
+      "status": {
+        "operationState": {"phase": "Succeeded", "finishedAt": "2026-11-20T02:53:39Z", "operation": {"sync": {"revision": "r2"}}},
+        "reconciledAt": "2026-11-20T02:54:19Z",
+        "sync": {"status": "Synced", "revision": "r2"},
+        "health": {"status": "Healthy"}}}`)
+	sig, _ = m.Classify(fresh)
+	if sig.Kind != reconcile.SignalSucceeded {
+		t.Fatalf("fresh Healthy after sync should commit, got %v", sig.Kind)
+	}
+	// Reconciled after the operation but describing another revision: stale.
+	other := fromJSON(t, `{
+      "metadata": {"name": "podinfo", "namespace": "argocd"},
+      "status": {
+        "operationState": {"phase": "Succeeded", "finishedAt": "2026-11-20T02:53:39Z", "operation": {"sync": {"revision": "r2"}}},
+        "reconciledAt": "2026-11-20T02:54:19Z",
+        "sync": {"status": "Synced", "revision": "r1"},
+        "health": {"status": "Degraded"}}}`)
+	sig, _ = m.Classify(other)
+	if sig.Kind != reconcile.SignalInProgress {
+		t.Fatalf("Degraded for a different revision must not roll back, got %v", sig.Kind)
+	}
+}
