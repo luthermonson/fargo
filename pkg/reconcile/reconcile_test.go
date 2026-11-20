@@ -290,3 +290,40 @@ func TestFinishedTxnOutcomeIsRecordedOnceAfterRestart(t *testing.T) {
 		t.Fatalf("commit count = %d, want 0 (ledger already committed)", c)
 	}
 }
+
+// flakyClient fails the first n calls of every method with a transport-style
+// error, then delegates.
+type flakyClient struct {
+	TxnClient
+	mu    sync.Mutex
+	fails int
+}
+
+func (f *flakyClient) Get(ctx context.Context, id string) (*txn.Transaction, error) {
+	f.mu.Lock()
+	if f.fails > 0 {
+		f.fails--
+		f.mu.Unlock()
+		return nil, context.DeadlineExceeded
+	}
+	f.mu.Unlock()
+	return f.TxnClient.Get(ctx, id)
+}
+
+func TestDeadlineRollbackRetriesUntilKineAnswers(t *testing.T) {
+	e, fk, obs, timer := newTestEngine(t)
+	e.cfg.retryBackoff = time.Millisecond
+	e.cfg.deadlineRetries = 10
+	ctx := context.Background()
+	id := "argo/apps/podinfo/r1"
+	must(t, e.Handle(ctx, started(id)))
+	// kine becomes unreachable after begin: the first three rollback attempts fail.
+	e.cfg.Client = &flakyClient{TxnClient: e.cfg.Client, fails: 3}
+	(*timer).fire()
+	if st, _ := fk.State(id); st != txn.StateRolledBack {
+		t.Fatalf("state after deadline = %s, want rolledBack (retries exhausted the flaky client)", st)
+	}
+	if obs.rolledBack != 1 {
+		t.Fatalf("rolledBack = %d, want 1", obs.rolledBack)
+	}
+}

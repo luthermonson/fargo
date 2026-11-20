@@ -98,6 +98,10 @@ type Config struct {
 	// now and afterFunc are injectable for tests; nil uses the real clock.
 	now       func() time.Time
 	afterFunc func(time.Duration, func()) stopper
+	// deadlineRetries and retryBackoff bound the deadline rollback's retry
+	// loop; zero values take the defaults (60 attempts from 2 s, capped at 2 m).
+	deadlineRetries int
+	retryBackoff    time.Duration
 }
 
 type stopper interface{ Stop() bool }
@@ -134,6 +138,12 @@ func NewEngine(cfg Config) *Engine {
 	}
 	if cfg.afterFunc == nil {
 		cfg.afterFunc = func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) }
+	}
+	if cfg.deadlineRetries <= 0 {
+		cfg.deadlineRetries = 60
+	}
+	if cfg.retryBackoff <= 0 {
+		cfg.retryBackoff = 2 * time.Second
 	}
 	return &Engine{cfg: cfg, log: cfg.Logger, active: map[string]*track{}, recorded: map[string]Outcome{}}
 }
@@ -271,11 +281,27 @@ func (e *Engine) register(id string, ref ObjRef, scope txn.Scope) {
 	tr := &track{ref: ref, scope: scope}
 	tr.deadline = e.cfg.afterFunc(e.cfg.HealthDeadline, func() {
 		// A fresh context: the informer context may be mid-shutdown, but a
-		// deadline rollback must still try to run.
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := e.rollback(ctx, Signal{Kind: SignalFailed, ID: id, Ref: ref}, "health deadline exceeded"); err != nil {
-			e.log.Error("deadline rollback failed", "id", id, "err", err)
+		// deadline rollback must still try to run. Unlike event-driven
+		// rollbacks, nothing re-triggers this one, so keep trying with backoff
+		// until kine answers; an open transaction left behind blocks every
+		// later rollout on the same scope with a 409.
+		backoff := e.cfg.retryBackoff
+		for attempt := 1; ; attempt++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			err := e.rollback(ctx, Signal{Kind: SignalFailed, ID: id, Ref: ref}, "health deadline exceeded")
+			cancel()
+			if err == nil {
+				return
+			}
+			e.log.Error("deadline rollback failed; retrying", "id", id, "attempt", attempt, "err", err)
+			if attempt >= e.cfg.deadlineRetries {
+				e.log.Error("deadline rollback gave up; the transaction stays open in the ledger", "id", id)
+				return
+			}
+			time.Sleep(backoff)
+			if backoff < 2*time.Minute {
+				backoff *= 2
+			}
 		}
 	})
 	e.active[id] = tr
