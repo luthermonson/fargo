@@ -57,6 +57,7 @@ type Client struct {
 	base       string
 	token      string
 	httpClient *http.Client
+	retries    int // extra attempts on transport errors (not on HTTP errors)
 }
 
 // Option configures a Client.
@@ -70,6 +71,16 @@ func WithToken(token string) Option {
 // WithHTTPClient overrides the underlying http.Client (used by tests).
 func WithHTTPClient(h *http.Client) Option {
 	return func(c *Client) { c.httpClient = h }
+}
+
+// WithRetries sets how many extra attempts a request gets on a transport
+// error (dial failure, timeout, reset). HTTP error responses are never retried.
+func WithRetries(n int) Option {
+	return func(c *Client) {
+		if n >= 0 {
+			c.retries = n
+		}
+	}
 }
 
 // New builds a Client for an endpoint. The endpoint is either a TCP URL
@@ -101,8 +112,20 @@ func New(endpoint string, opts ...Option) (*Client, error) {
 			return nil, fmt.Errorf("kine endpoint %q must be http://, https:// or unix://", endpoint)
 		}
 		c.base = strings.TrimRight(endpoint, "/")
-		c.httpClient = &http.Client{Timeout: 30 * time.Second}
+		// Short dial and request deadlines with retries (see do): on a rig whose
+		// pod-to-host path drops new connections intermittently, one 30 s hang
+		// per Application event delayed begin by minutes; several quick
+		// attempts succeed within seconds.
+		c.httpClient = &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				DialContext:         (&net.Dialer{Timeout: 3 * time.Second}).DialContext,
+				MaxIdleConnsPerHost: 4,
+				IdleConnTimeout:     5 * time.Minute,
+			},
+		}
 	}
+	c.retries = 3
 	for _, o := range opts {
 		o(c)
 	}
@@ -135,42 +158,55 @@ func IsNotFound(err error) bool {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
-	var rdr io.Reader
+	var data []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("marshal request: %w", err)
 		}
-		rdr = bytes.NewReader(b)
+		data = b
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.base+path, rdr)
-	if err != nil {
-		return err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
+	var resp *http.Response
+	var err error
+	for attempt := 0; ; attempt++ {
+		var r io.Reader
+		if data != nil {
+			r = bytes.NewReader(data)
+		}
+		var req *http.Request
+		req, err = http.NewRequestWithContext(ctx, method, c.base+path, r)
+		if err != nil {
+			return err
+		}
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		if c.token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.token)
+		}
+		resp, err = c.httpClient.Do(req)
+		if err == nil {
+			break
+		}
+		if attempt >= c.retries || ctx.Err() != nil {
+			return err
+		}
+		time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg := strings.TrimSpace(string(data))
+		msg := strings.TrimSpace(string(payload))
 		var je struct {
 			Error string `json:"error"`
 		}
-		if json.Unmarshal(data, &je) == nil && je.Error != "" {
+		if json.Unmarshal(payload, &je) == nil && je.Error != "" {
 			msg = je.Error
 		}
 		return &apiError{Status: resp.StatusCode, Message: msg}
 	}
-	if out != nil && len(data) > 0 {
-		if err := json.Unmarshal(data, out); err != nil {
+	if out != nil && len(payload) > 0 {
+		if err := json.Unmarshal(payload, out); err != nil {
 			return fmt.Errorf("decode response: %w", err)
 		}
 	}
