@@ -53,7 +53,9 @@ spec:
               for i in $(seq 1 60); do
                 # The ledger lists [{id,state,...}]. Succeed once an open txn for
                 # this app appears.
-                body="$(curl -fsS $auth "${KINE_ENDPOINT}/txn" || true)"
+                # Bounded per attempt: a connect that hangs must not eat the
+                # Job's whole deadline; the loop retries instead.
+                body="$(curl -fsS --connect-timeout 3 --max-time 5 $auth "${KINE_ENDPOINT}/txn" || true)"
                 echo "$body" | tr '}' '\n' | grep -q "\"id\":\"${APP_PREFIX}" \
                   && echo "savepoint is open; releasing sync" && exit 0
                 echo "  not yet (attempt $i); sleeping 2s"
