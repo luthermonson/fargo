@@ -288,9 +288,10 @@ func (e *Engine) commit(ctx context.Context, s Signal) error {
 	}
 	e.mu.Lock()
 	tr := e.active[id]
-	if tr != nil && tr.done {
+	_, recorded := e.recorded[id]
+	if (tr != nil && tr.done) || recorded {
 		e.mu.Unlock()
-		return nil
+		return nil // finished and written back; every later event is noise
 	}
 	e.mu.Unlock()
 	ref := e.refOr(id, s.Ref)
@@ -342,9 +343,10 @@ func (e *Engine) rollback(ctx context.Context, s Signal, reason string) error {
 	}
 	e.mu.Lock()
 	tr := e.active[id]
-	if tr != nil && tr.done {
+	_, recorded := e.recorded[id]
+	if (tr != nil && tr.done) || recorded {
 		e.mu.Unlock()
-		return nil
+		return nil // finished and written back; every later event is noise
 	}
 	e.mu.Unlock()
 	ref := e.refOr(id, s.Ref)

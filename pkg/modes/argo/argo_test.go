@@ -2,6 +2,7 @@ package argo_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -196,5 +197,27 @@ func TestArgoStaleHealthAfterSyncIsInProgress(t *testing.T) {
 	sig, _ = m.Classify(other)
 	if sig.Kind != reconcile.SignalInProgress {
 		t.Fatalf("Degraded for a different revision must not roll back, got %v", sig.Kind)
+	}
+}
+
+func TestArgoIDIsPerOperation(t *testing.T) {
+	m := argo.New(fakeResolver{}, modes.NamespaceScopeAuto)
+	first := fromJSON(t, `{
+      "metadata": {"name": "podinfo", "namespace": "argocd"},
+      "status": {"operationState": {"phase": "Running", "startedAt": "2026-11-20T02:52:17Z", "operation": {"sync": {"revision": "r1"}}},
+                 "resources": []}}`)
+	again := fromJSON(t, `{
+      "metadata": {"name": "podinfo", "namespace": "argocd"},
+      "status": {"operationState": {"phase": "Running", "startedAt": "2026-11-20T03:01:29Z", "operation": {"sync": {"revision": "r1"}}},
+                 "resources": []}}`)
+	a, _ := m.Classify(first)
+	b, _ := m.Classify(again)
+	if a.ID == b.ID {
+		t.Fatalf("two sync operations of the same revision got one id: %q", a.ID)
+	}
+	for _, id := range []string{a.ID, b.ID} {
+		if !strings.HasPrefix(id, "argo/argocd/podinfo/r1-2026-11-20T") {
+			t.Fatalf("id %q should keep the argo/<ns>/<app>/<revision> prefix the PreSync hook matches on", id)
+		}
 	}
 }

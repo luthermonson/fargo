@@ -3,7 +3,8 @@
 // Begin: status.operationState.phase == Running with operation.sync set.
 // Scope: status.resources[] (group, kind -> resource via target discovery,
 // namespace, name) plus spec.destination.namespace when namespace scope is
-// auto. The transaction id uses status.operationState.operation.sync.revision.
+// auto. The transaction id is argo/<ns>/<app>/<revision>-<operation startedAt>,
+// so re-syncing the same revision opens a new transaction.
 // Commit: phase == Succeeded followed by status.health.status == Healthy.
 // Rollback: phase Failed/Error, or health Degraded (deadline is the engine's).
 // In progress: phase Succeeded with any other health (the engine re-adopts an
@@ -56,6 +57,14 @@ func (m *Mapper) Classify(obj *unstructured.Unstructured) (reconcile.Signal, err
 
 	phase, _, _ := unstructured.NestedString(obj.Object, "status", "operationState", "phase")
 	revision := syncRevision(obj)
+	// One transaction per sync OPERATION, not per git revision: the same
+	// revision is routinely synced again (after a rollback, or a retry), and a
+	// ledger id keyed on the revision alone would report it as already
+	// finished and never open a new transaction. operationState.startedAt is
+	// unique per operation on an Application.
+	if startedAt, ok, _ := unstructured.NestedString(obj.Object, "status", "operationState", "startedAt"); ok && startedAt != "" {
+		revision = revision + "-" + startedAt
+	}
 	id := reconcile.SanitizeID("argo", ns, name, revision)
 
 	switch phase {
