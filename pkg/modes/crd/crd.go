@@ -1,5 +1,5 @@
-// Package crd maps the rewind Transaction CRD
-// (transactions.rewind.gascity.dev/v1alpha1) to rollout Signals. It is the
+// Package crd maps the fargo Transaction CRD
+// (transactions.fargo.gascity.dev/v1alpha1) to rollout Signals. It is the
 // airtight mode: there is no deployment system racing the controller, so the
 // savepoint is taken before anything is applied.
 //
@@ -14,19 +14,19 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/luthermonson/rewind/pkg/reconcile"
-	"github.com/luthermonson/rewind/pkg/txn"
+	"github.com/luthermonson/fargo/pkg/reconcile"
+	"github.com/luthermonson/fargo/pkg/txn"
 )
 
 // Group/version/resource for the Transaction CRD.
 const (
-	Group    = "rewind.gascity.dev"
+	Group    = "fargo.gascity.dev"
 	Version  = "v1alpha1"
 	Resource = "transactions"
 	Kind     = "Transaction"
 )
 
-// GVR is the Transaction resource rewind watches.
+// GVR is the Transaction resource fargo watches.
 var GVR = schema.GroupVersionResource{Group: Group, Version: Version, Resource: Resource}
 
 // Mapper implements modes.Mapper for the Transaction CRD.

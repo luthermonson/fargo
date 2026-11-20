@@ -6,9 +6,9 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/luthermonson/rewind/pkg/modes"
-	"github.com/luthermonson/rewind/pkg/modes/argo"
-	"github.com/luthermonson/rewind/pkg/reconcile"
+	"github.com/luthermonson/fargo/pkg/modes"
+	"github.com/luthermonson/fargo/pkg/modes/argo"
+	"github.com/luthermonson/fargo/pkg/reconcile"
 )
 
 // fakeResolver maps kinds to resources without a cluster.

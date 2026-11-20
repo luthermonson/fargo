@@ -1,5 +1,5 @@
 // Package modes maps the objects of a deployment system (Argo CD, Flux, or
-// the rewind Transaction CRD) to rollout Signals the reconcile engine drives.
+// the fargo Transaction CRD) to rollout Signals the reconcile engine drives.
 // Each mapper is a pure function over an object, which makes every mode's
 // begin/commit/rollback decision unit-testable on fixtures.
 package modes
@@ -8,7 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/luthermonson/rewind/pkg/reconcile"
+	"github.com/luthermonson/fargo/pkg/reconcile"
 )
 
 // NamespaceScope selects whether a destination/target namespace is added to

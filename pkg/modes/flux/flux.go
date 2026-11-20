@@ -17,12 +17,12 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/luthermonson/rewind/pkg/modes"
-	"github.com/luthermonson/rewind/pkg/reconcile"
-	"github.com/luthermonson/rewind/pkg/txn"
+	"github.com/luthermonson/fargo/pkg/modes"
+	"github.com/luthermonson/fargo/pkg/reconcile"
+	"github.com/luthermonson/fargo/pkg/txn"
 )
 
-// GVRs are the Flux resources rewind watches.
+// GVRs are the Flux resources fargo watches.
 var (
 	KustomizationGVR = schema.GroupVersionResource{Group: "kustomize.toolkit.fluxcd.io", Version: "v1", Resource: "kustomizations"}
 	HelmReleaseGVR   = schema.GroupVersionResource{Group: "helm.toolkit.fluxcd.io", Version: "v2", Resource: "helmreleases"}

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/luthermonson/rewind/pkg/txn"
+	"github.com/luthermonson/fargo/pkg/txn"
 )
 
 // Outcome is the annotation/label value recorded against a watched object.

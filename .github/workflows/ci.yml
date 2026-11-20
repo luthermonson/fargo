@@ -26,7 +26,7 @@ jobs:
       - name: test (race)
         run: go test -race ./...
       - name: build
-        run: CGO_ENABLED=0 go build -trimpath -o bin/rewind ./cmd/rewind
+        run: CGO_ENABLED=0 go build -trimpath -o bin/fargo ./cmd/fargo
 
   helm:
     runs-on: ubuntu-24.04
@@ -36,9 +36,9 @@ jobs:
         with:
           version: v3.16.3
       - name: helm lint
-        run: helm lint charts/rewind --set mode=argo
+        run: helm lint charts/fargo --set mode=argo
       - name: helm template (each mode)
         run: |
           for m in argo flux crd; do
-            helm template rewind charts/rewind --set mode=$m >/dev/null
+            helm template fargo charts/fargo --set mode=$m >/dev/null
           done

@@ -1,4 +1,4 @@
-rewind is installed in mode "{{ .Values.mode }}".
+fargo is installed in mode "{{ .Values.mode }}".
 
 Watching for rollouts and bracketing each in a kine transaction at:
   {{ .Values.kine.endpoint }}
@@ -14,6 +14,6 @@ socket; for a TCP endpoint behind a bearer token, create a Secret and set it.
 {{- end }}
 
 Check it:
-  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "rewind.fullname" . }} -f
-  kubectl -n {{ .Release.Namespace }} port-forward deploy/{{ include "rewind.fullname" . }} 8080 &
-  curl -s localhost:8080/metrics | grep rewind_
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "fargo.fullname" . }} -f
+  kubectl -n {{ .Release.Namespace }} port-forward deploy/{{ include "fargo.fullname" . }} 8080 &
+  curl -s localhost:8080/metrics | grep fargo_

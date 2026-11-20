@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/luthermonson/rewind/pkg/txn"
+	"github.com/luthermonson/fargo/pkg/txn"
 )
 
 func TestResourceRefKey(t *testing.T) {

@@ -1,9 +1,9 @@
-# rewind
+# fargo
 
 **Transactional deployments for Kubernetes, on a datastore that can actually
 undo them.**
 
-rewind is a controller that brackets every rollout in a database transaction.
+fargo is a controller that brackets every rollout in a database transaction.
 When a deployment starts, it opens a *scoped savepoint* in the cluster's
 datastore. When the rollout becomes healthy, it commits. When the rollout
 fails — a bad image, a failed health check, a deadline — it **rolls the
@@ -16,9 +16,9 @@ It runs on **k3s-on-beads**: a real k3s cluster whose datastore is
 stores every Kubernetes object as a *bead* in a Dolt-versioned work-graph. The
 companion gate is [`kourt`](https://github.com/luthermonson/kourt).
 
-> Status: prototype. rewind builds against the **kine control API v0** contract
+> Status: prototype. fargo builds against the **kine control API v0** contract
 > for scoped transactions (`/txn/*`). Those endpoints are still being built in
-> kine; until they are live, run rewind with `--dry-run` or against the fake
+> kine; until they are live, run fargo with `--dry-run` or against the fake
 > kine in the tests. The three mode mappers, the reconcile engine, the chart
 > and the demo are complete and tested.
 
@@ -61,7 +61,7 @@ nodes, and system state keep moving. `commit` simply forgets the savepoint —
 the writes were on the live branch all along, so there is nothing to merge.
 
 **What it cannot undo:** anything a controller did *outside* the datastore — a
-cloud VM, a DNS record, a webhook call, a sent email. rewind reverts cluster
+cloud VM, a DNS record, a webhook call, a sent email. fargo reverts cluster
 state, not the world. (This is why the demo uses podinfo and a non-existent
 image: the failure is entirely in-cluster.) Node-local state *follows* the
 revert — pods whose objects vanish are stopped by the kubelet — but it is not
@@ -69,7 +69,7 @@ restored byte-for-byte.
 
 ## The three modes
 
-rewind watches one deployment system, selected by `--mode`, and maps its
+fargo watches one deployment system, selected by `--mode`, and maps its
 objects to three rollout events — `started(id, scope)`, `succeeded(id)`,
 `failed(id, reason)` — which a shared engine drives through begin → health-wait
 → commit / rollback.
@@ -89,8 +89,8 @@ Scope comes from `status.resources[]` (each `group`, `kind`→resource via the
 target cluster's discovery, `namespace`, `name`), plus `spec.destination.namespace`
 as an in-scope namespace when `--namespace-scope auto`. The transaction id is
 `argo/<app-namespace>/<app-name>/<operationState.operation.sync.revision>`.
-rewind annotates the Application with `rewind.gascity.dev/txn: <id>` and
-`rewind.gascity.dev/outcome: committed|rolledBack|open` — the only writes it
+fargo annotates the Application with `fargo.gascity.dev/txn: <id>` and
+`fargo.gascity.dev/outcome: committed|rolledBack|open` — the only writes it
 makes to the management cluster.
 
 Argo can begin *before* apply with a **PreSync hook**: ship
@@ -115,13 +115,13 @@ Scope comes from `status.inventory.entries[].id`
 is `flux/<namespace>/<name>/<lastAttemptedRevision>`.
 
 **Caveat:** Flux has no pre-apply hook, so there is a small window where apply
-can precede `begin`. rewind narrows it by reacting on the *reconciling*
+can precede `begin`. fargo narrows it by reacting on the *reconciling*
 condition the instant it appears (before the apply completes), but it cannot
 close it entirely. For an airtight savepoint, use `crd` mode.
 
 ### `--mode crd`
 
-An explicit `transactions.rewind.gascity.dev/v1alpha1` object, for kubectl and
+An explicit `transactions.fargo.gascity.dev/v1alpha1` object, for kubectl and
 CI users — the airtight mode, because nothing races the controller.
 
 - create it (with `spec.scope`) → **begin** (`status.phase: Open`)
@@ -135,7 +135,7 @@ CI users — the airtight mode, because nothing races the controller.
 
 ## Configuration
 
-Flags, `REWIND_*` environment variables and Helm values all map to the same
+Flags, `FARGO_*` environment variables and Helm values all map to the same
 settings — endpoints are reconfigurable without a code change, and the
 Deployment reads kubeconfigs and the kine token from mounted Secrets, so
 swapping the management cluster or the kine address is a values change plus a
@@ -143,22 +143,22 @@ rollout.
 
 | Flag | Env | Purpose |
 |------|-----|---------|
-| `--mode` | `REWIND_MODE` | `argo`, `flux` or `crd` (required) |
-| `--management-kubeconfig` | `REWIND_MANAGEMENT_KUBECONFIG` | where Applications/Kustomizations/HelmReleases/Transactions are watched (default: in-cluster) |
-| `--management-context` | `REWIND_MANAGEMENT_CONTEXT` | context within that kubeconfig |
-| `--target-kubeconfig` | `REWIND_TARGET_KUBECONFIG` | managed cluster, for discovery/health (default: in-cluster) |
-| `--kine-endpoint` | `REWIND_KINE_ENDPOINT` | `http://host:port` or `unix:///path/kine.sock` |
-| `--kine-token-file` | `REWIND_KINE_TOKEN_FILE` | file with the bearer token (mounted from a Secret) |
-| `--health-deadline` | `REWIND_HEALTH_DEADLINE` | wait this long for health before rolling back (default `5m`) |
-| `--namespace-scope` | `REWIND_NAMESPACE_SCOPE` | `auto` (add destination namespace to scope) or `none` |
-| `--namespace` | `REWIND_NAMESPACE` | namespace to watch (empty = all) |
-| `--dry-run` | `REWIND_DRY_RUN` | log begin/commit/rollback without sending |
-| `--metrics-bind-address` | `REWIND_METRICS_BIND_ADDRESS` | `/metrics`, `/healthz`, `/readyz` (default `:8080`) |
-| `--leader-elect` | `REWIND_LEADER_ELECT` | run leader election |
+| `--mode` | `FARGO_MODE` | `argo`, `flux` or `crd` (required) |
+| `--management-kubeconfig` | `FARGO_MANAGEMENT_KUBECONFIG` | where Applications/Kustomizations/HelmReleases/Transactions are watched (default: in-cluster) |
+| `--management-context` | `FARGO_MANAGEMENT_CONTEXT` | context within that kubeconfig |
+| `--target-kubeconfig` | `FARGO_TARGET_KUBECONFIG` | managed cluster, for discovery/health (default: in-cluster) |
+| `--kine-endpoint` | `FARGO_KINE_ENDPOINT` | `http://host:port` or `unix:///path/kine.sock` |
+| `--kine-token-file` | `FARGO_KINE_TOKEN_FILE` | file with the bearer token (mounted from a Secret) |
+| `--health-deadline` | `FARGO_HEALTH_DEADLINE` | wait this long for health before rolling back (default `5m`) |
+| `--namespace-scope` | `FARGO_NAMESPACE_SCOPE` | `auto` (add destination namespace to scope) or `none` |
+| `--namespace` | `FARGO_NAMESPACE` | namespace to watch (empty = all) |
+| `--dry-run` | `FARGO_DRY_RUN` | log begin/commit/rollback without sending |
+| `--metrics-bind-address` | `FARGO_METRICS_BIND_ADDRESS` | `/metrics`, `/healthz`, `/readyz` (default `:8080`) |
+| `--leader-elect` | `FARGO_LEADER_ELECT` | run leader election |
 
 The **management cluster** is where the deployment system's objects live (Argo
 may run somewhere other than the cluster it deploys to). The **target cluster**
-is the managed one; rewind uses its discovery to map a `Kind` to a resource for
+is the managed one; fargo uses its discovery to map a `Kind` to a resource for
 scope keys. Both default to in-cluster.
 
 The transaction client speaks the kine control API v0 over TCP or a unix
@@ -168,7 +168,7 @@ defaulted to a real value — mount it from a Secret.
 ## Quickstart
 
 ```sh
-make build        # static ./bin/rewind
+make build        # static ./bin/fargo
 make test         # go test -race ./...
 make helm-lint    # lint + template all three modes
 ```
@@ -176,40 +176,40 @@ make helm-lint    # lint + template all three modes
 ### argo
 
 ```sh
-helm install rewind charts/rewind -n rewind-system --create-namespace \
+helm install fargo charts/fargo -n fargo-system --create-namespace \
   --set mode=argo \
   --set kine.endpoint=http://192.168.5.2:2381 \
-  --set kine.tokenSecret.name=rewind-kine-token
+  --set kine.tokenSecret.name=fargo-kine-token
 ```
 
 ### flux
 
 ```sh
-helm install rewind charts/rewind -n rewind-system --create-namespace \
+helm install fargo charts/fargo -n fargo-system --create-namespace \
   --set mode=flux --set kine.endpoint=http://192.168.5.2:2381
 ```
 
 ### crd
 
 ```sh
-helm install rewind charts/rewind -n rewind-system --create-namespace \
+helm install fargo charts/fargo -n fargo-system --create-namespace \
   --set mode=crd --set kine.endpoint=http://192.168.5.2:2381
 kubectl apply -f examples/crd/transaction.yaml
 ```
 
-See [`charts/rewind/README.md`](charts/rewind/README.md) for every value and
+See [`charts/fargo/README.md`](charts/fargo/README.md) for every value and
 the RBAC each mode is granted.
 
 ## Demo
 
-[`luthermonson/rewind-demo`](https://github.com/luthermonson/rewind-demo) is a
+[`luthermonson/fargo-demo`](https://github.com/luthermonson/fargo-demo) is a
 tiny GitOps repo both Argo and Flux can point at: podinfo on branch `main`
 (good) and branch `broken` (a non-existent image tag). The flow:
 
-1. Sync `main`: rewind begins a transaction, podinfo goes healthy, it commits —
+1. Sync `main`: fargo begins a transaction, podinfo goes healthy, it commits —
    nothing visible changed.
-2. Sync `broken`: rewind begins, the pod lands in `ImagePullBackOff`, the app
-   goes Degraded, rewind rolls back. `kubectl get all` shows the **previous**
+2. Sync `broken`: fargo begins, the pod lands in `ImagePullBackOff`, the app
+   goes Degraded, fargo rolls back. `kubectl get all` shows the **previous**
    ReplicaSet and Pods with their **original UIDs**, and `bd history` on the
    Deployment's bead still shows the failed attempt in the timeline.
 
@@ -224,7 +224,7 @@ tiny GitOps repo both Argo and Flux can point at: podinfo on branch `main`
          └──────────┬────────────┘             └─────────┬────────────────┘
                     │ informers                          │ /txn/* (control API v0)
             ┌───────▼─────────────────────────────────────▼──────┐
-            │ rewind                                              │
+            │ fargo                                              │
             │  pkg/modes/{argo,flux,crd}  obj → Signal            │
             │  pkg/reconcile              begin/commit/rollback   │
             │  pkg/txn                    kine control API client │
@@ -232,7 +232,7 @@ tiny GitOps repo both Argo and Flux can point at: podinfo on branch `main`
 ```
 
 ```
-cmd/rewind/        CLI (urfave/cli v2) → config → controller
+cmd/fargo/        CLI (urfave/cli v2) → config → controller
 pkg/config/        flags/env/values → one Config
 pkg/txn/           kine control API v0 client + scope builder
 pkg/reconcile/     the engine: begin once, commit on healthy, roll back on
@@ -242,7 +242,7 @@ pkg/controller/    k8s clients, dynamic informers, discovery, annotator,
                    leader election, metrics
 pkg/txntest/       a fake kine control API for tests
 config/crd/        the Transaction CRD
-charts/rewind/     Helm chart (per-mode RBAC, Secret-mounted token/kubeconfig)
+charts/fargo/     Helm chart (per-mode RBAC, Secret-mounted token/kubeconfig)
 examples/          Argo PreSync hook, a Transaction CR
 ```
 
@@ -257,7 +257,7 @@ adopted.
   `beads-backend`) — the k3s datastore on beads; hosts the control API v0.
 - [`luthermonson/kourt`](https://github.com/luthermonson/kourt) — the
   causality-first test gate that decides whether a rollout (or a fork) passed.
-- [`luthermonson/rewind-demo`](https://github.com/luthermonson/rewind-demo) —
+- [`luthermonson/fargo-demo`](https://github.com/luthermonson/fargo-demo) —
   the demo GitOps repo.
 
 ## License

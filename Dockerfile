@@ -1,4 +1,4 @@
-# Build a static rewind binary and ship it on distroless static.
+# Build a static fargo binary and ship it on distroless static.
 FROM golang:1.27 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -11,10 +11,10 @@ ARG VERSION=dev
 ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-$(go env GOOS)} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
-    go build -trimpath -ldflags "-s -w -X github.com/luthermonson/rewind/pkg/version.Version=${VERSION}" \
-    -o /out/rewind ./cmd/rewind
+    go build -trimpath -ldflags "-s -w -X github.com/luthermonson/fargo/pkg/version.Version=${VERSION}" \
+    -o /out/fargo ./cmd/fargo
 
 FROM gcr.io/distroless/static:nonroot
-COPY --from=build /out/rewind /usr/local/bin/rewind
+COPY --from=build /out/fargo /usr/local/bin/fargo
 USER 65532:65532
-ENTRYPOINT ["/usr/local/bin/rewind"]
+ENTRYPOINT ["/usr/local/bin/fargo"]

@@ -1,12 +1,12 @@
 apiVersion: v2
-name: rewind
+name: fargo
 description: Transactional deployments on a k3s-on-beads cluster — begin a scoped kine transaction when a rollout starts, commit on healthy, roll back on failure.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
-home: https://github.com/luthermonson/rewind
+home: https://github.com/luthermonson/fargo
 sources:
-  - https://github.com/luthermonson/rewind
+  - https://github.com/luthermonson/fargo
 keywords:
   - kubernetes
   - gitops

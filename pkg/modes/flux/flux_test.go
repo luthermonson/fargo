@@ -6,9 +6,9 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/luthermonson/rewind/pkg/modes"
-	"github.com/luthermonson/rewind/pkg/modes/flux"
-	"github.com/luthermonson/rewind/pkg/reconcile"
+	"github.com/luthermonson/fargo/pkg/modes"
+	"github.com/luthermonson/fargo/pkg/modes/flux"
+	"github.com/luthermonson/fargo/pkg/reconcile"
 )
 
 type fakeResolver map[string]string

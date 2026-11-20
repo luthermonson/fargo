@@ -6,8 +6,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/luthermonson/rewind/pkg/modes/crd"
-	"github.com/luthermonson/rewind/pkg/reconcile"
+	"github.com/luthermonson/fargo/pkg/modes/crd"
+	"github.com/luthermonson/fargo/pkg/reconcile"
 )
 
 func fromJSON(t *testing.T, s string) *unstructured.Unstructured {
@@ -27,7 +27,7 @@ func fromJSON(t *testing.T, s string) *unstructured.Unstructured {
 }
 
 const pendingTxn = `{
-  "apiVersion": "rewind.gascity.dev/v1alpha1",
+  "apiVersion": "fargo.gascity.dev/v1alpha1",
   "kind": "Transaction",
   "metadata": {"name": "deploy-podinfo", "namespace": "ci", "generation": 1},
   "spec": {

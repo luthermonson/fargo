@@ -1,4 +1,4 @@
-module github.com/luthermonson/rewind
+module github.com/luthermonson/fargo
 
 go 1.27
 

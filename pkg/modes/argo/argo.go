@@ -16,12 +16,12 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/luthermonson/rewind/pkg/modes"
-	"github.com/luthermonson/rewind/pkg/reconcile"
-	"github.com/luthermonson/rewind/pkg/txn"
+	"github.com/luthermonson/fargo/pkg/modes"
+	"github.com/luthermonson/fargo/pkg/reconcile"
+	"github.com/luthermonson/fargo/pkg/txn"
 )
 
-// GVR is the Application resource rewind watches.
+// GVR is the Application resource fargo watches.
 var GVR = schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "applications"}
 
 // Mapper implements modes.Mapper for Argo CD.

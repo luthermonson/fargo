@@ -1,5 +1,5 @@
-// Package config holds the resolved runtime configuration for rewind. Flags,
-// REWIND_* environment variables and Helm values all map onto this one struct,
+// Package config holds the resolved runtime configuration for fargo. Flags,
+// FARGO_* environment variables and Helm values all map onto this one struct,
 // so changing the management cluster or the kine address is a values change
 // plus a rollout, never a code change.
 package config
@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/luthermonson/rewind/pkg/modes"
+	"github.com/luthermonson/fargo/pkg/modes"
 )
 
-// Mode selects which deployment system rewind watches.
+// Mode selects which deployment system fargo watches.
 type Mode string
 
 const (

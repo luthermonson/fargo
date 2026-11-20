@@ -1,8 +1,8 @@
-# rewind Argo CD PreSync hook.
+# fargo Argo CD PreSync hook.
 #
 # Argo runs PreSync hooks before it applies the manifests. This Job blocks the
-# sync until rewind has opened the transaction for this rollout, so apply can
-# never start before the savepoint is taken. rewind opens the transaction when
+# sync until fargo has opened the transaction for this rollout, so apply can
+# never start before the savepoint is taken. fargo opens the transaction when
 # the Application's operationState.phase becomes Running (which happens as the
 # sync operation starts, around the time hooks run), with an id of the form
 #   argo/<app-namespace>/<app-name>/<revision>
@@ -18,7 +18,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  generateName: rewind-presync-
+  generateName: fargo-presync-
   annotations:
     argocd.argoproj.io/hook: PreSync
     argocd.argoproj.io/hook-delete-policy: HookSucceeded
@@ -40,7 +40,7 @@ spec:
             # - name: KINE_TOKEN
             #   valueFrom:
             #     secretKeyRef:
-            #       name: rewind-kine-token
+            #       name: fargo-kine-token
             #       key: token
           command:
             - /bin/sh
@@ -49,7 +49,7 @@ spec:
               set -eu
               auth=""
               [ -n "${KINE_TOKEN:-}" ] && auth="-H Authorization:\ Bearer\ ${KINE_TOKEN}"
-              echo "waiting for an open rewind transaction with prefix ${APP_PREFIX}"
+              echo "waiting for an open fargo transaction with prefix ${APP_PREFIX}"
               for i in $(seq 1 60); do
                 # The ledger lists [{id,state,...}]. Succeed once an open txn for
                 # this app appears.
@@ -61,5 +61,5 @@ spec:
                 echo "  not yet (attempt $i); sleeping 2s"
                 sleep 2
               done
-              echo "timed out waiting for the rewind savepoint" >&2
+              echo "timed out waiting for the fargo savepoint" >&2
               exit 1

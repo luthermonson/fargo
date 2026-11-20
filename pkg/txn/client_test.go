@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/luthermonson/rewind/pkg/txn"
-	"github.com/luthermonson/rewind/pkg/txntest"
+	"github.com/luthermonson/fargo/pkg/txn"
+	"github.com/luthermonson/fargo/pkg/txntest"
 )
 
 func TestClientLifecycleOverHTTP(t *testing.T) {

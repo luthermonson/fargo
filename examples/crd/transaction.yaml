@@ -1,4 +1,4 @@
-# A rewind Transaction. Creating this opens a scoped kine savepoint; apply your
+# A fargo Transaction. Creating this opens a scoped kine savepoint; apply your
 # change; then set spec.outcome to commit or rollback (or kubectl delete it
 # while Open to roll back).
 #
@@ -8,7 +8,7 @@
 #
 # Watch it:
 #   kubectl -n ci get transactions
-apiVersion: rewind.gascity.dev/v1alpha1
+apiVersion: fargo.gascity.dev/v1alpha1
 kind: Transaction
 metadata:
   name: deploy-podinfo

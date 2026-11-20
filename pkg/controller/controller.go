@@ -1,4 +1,4 @@
-// Package controller wires the rewind runtime together: Kubernetes clients for
+// Package controller wires the fargo runtime together: Kubernetes clients for
 // the management and target clusters, the kine transaction client, the mode
 // mapper, dynamic informers, the reconcile engine, leader election and the
 // metrics endpoint.
@@ -24,16 +24,16 @@ import (
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 
-	"github.com/luthermonson/rewind/pkg/config"
-	"github.com/luthermonson/rewind/pkg/modes"
-	"github.com/luthermonson/rewind/pkg/modes/argo"
-	"github.com/luthermonson/rewind/pkg/modes/crd"
-	"github.com/luthermonson/rewind/pkg/modes/flux"
-	"github.com/luthermonson/rewind/pkg/reconcile"
-	"github.com/luthermonson/rewind/pkg/txn"
+	"github.com/luthermonson/fargo/pkg/config"
+	"github.com/luthermonson/fargo/pkg/modes"
+	"github.com/luthermonson/fargo/pkg/modes/argo"
+	"github.com/luthermonson/fargo/pkg/modes/crd"
+	"github.com/luthermonson/fargo/pkg/modes/flux"
+	"github.com/luthermonson/fargo/pkg/reconcile"
+	"github.com/luthermonson/fargo/pkg/txn"
 )
 
-// Controller is an assembled, runnable rewind instance.
+// Controller is an assembled, runnable fargo instance.
 type Controller struct {
 	cfg     config.Config
 	log     *slog.Logger
@@ -155,11 +155,11 @@ func (c *Controller) runWithLeaderElection(ctx context.Context) error {
 	}
 	id, _ := os.Hostname()
 	if id == "" {
-		id = "rewind"
+		id = "fargo"
 	}
 	leaseName := c.cfg.LeaderElectID
 	if leaseName == "" {
-		leaseName = "rewind-" + string(c.cfg.Mode)
+		leaseName = "fargo-" + string(c.cfg.Mode)
 	}
 	lock := &resourcelock.LeaseLock{
 		LeaseMeta:  metav1.ObjectMeta{Name: leaseName, Namespace: ns},

@@ -23,18 +23,18 @@ func (m *metrics) RolledBack(string) { m.rolledBack.Add(1) }
 func (m *metrics) Errored(string)    { m.errors.Add(1) }
 
 func (m *metrics) write(w http.ResponseWriter) {
-	fmt.Fprintf(w, "# HELP rewind_transactions_begun_total Transactions begun.\n")
-	fmt.Fprintf(w, "# TYPE rewind_transactions_begun_total counter\n")
-	fmt.Fprintf(w, "rewind_transactions_begun_total %d\n", m.begun.Load())
-	fmt.Fprintf(w, "# HELP rewind_transactions_committed_total Transactions committed.\n")
-	fmt.Fprintf(w, "# TYPE rewind_transactions_committed_total counter\n")
-	fmt.Fprintf(w, "rewind_transactions_committed_total %d\n", m.committed.Load())
-	fmt.Fprintf(w, "# HELP rewind_transactions_rolledback_total Transactions rolled back.\n")
-	fmt.Fprintf(w, "# TYPE rewind_transactions_rolledback_total counter\n")
-	fmt.Fprintf(w, "rewind_transactions_rolledback_total %d\n", m.rolledBack.Load())
-	fmt.Fprintf(w, "# HELP rewind_errors_total Reconcile errors.\n")
-	fmt.Fprintf(w, "# TYPE rewind_errors_total counter\n")
-	fmt.Fprintf(w, "rewind_errors_total %d\n", m.errors.Load())
+	fmt.Fprintf(w, "# HELP fargo_transactions_begun_total Transactions begun.\n")
+	fmt.Fprintf(w, "# TYPE fargo_transactions_begun_total counter\n")
+	fmt.Fprintf(w, "fargo_transactions_begun_total %d\n", m.begun.Load())
+	fmt.Fprintf(w, "# HELP fargo_transactions_committed_total Transactions committed.\n")
+	fmt.Fprintf(w, "# TYPE fargo_transactions_committed_total counter\n")
+	fmt.Fprintf(w, "fargo_transactions_committed_total %d\n", m.committed.Load())
+	fmt.Fprintf(w, "# HELP fargo_transactions_rolledback_total Transactions rolled back.\n")
+	fmt.Fprintf(w, "# TYPE fargo_transactions_rolledback_total counter\n")
+	fmt.Fprintf(w, "fargo_transactions_rolledback_total %d\n", m.rolledBack.Load())
+	fmt.Fprintf(w, "# HELP fargo_errors_total Reconcile errors.\n")
+	fmt.Fprintf(w, "# TYPE fargo_errors_total counter\n")
+	fmt.Fprintf(w, "fargo_errors_total %d\n", m.errors.Load())
 }
 
 // serveMetrics starts the metrics/health HTTP server. It returns once the

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/luthermonson/rewind/pkg/modes"
+	"github.com/luthermonson/fargo/pkg/modes"
 )
 
 func TestValidate(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/luthermonson/rewind/pkg/txn"
-	"github.com/luthermonson/rewind/pkg/txntest"
+	"github.com/luthermonson/fargo/pkg/txn"
+	"github.com/luthermonson/fargo/pkg/txntest"
 )
 
 // fakeTimer is an injectable afterFunc that captures the fired callback so a

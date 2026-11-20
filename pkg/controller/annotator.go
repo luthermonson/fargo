@@ -11,13 +11,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 
-	"github.com/luthermonson/rewind/pkg/reconcile"
+	"github.com/luthermonson/fargo/pkg/reconcile"
 )
 
 // Annotation keys written back onto watched objects.
 const (
-	AnnotationTxn     = "rewind.gascity.dev/txn"
-	AnnotationOutcome = "rewind.gascity.dev/outcome"
+	AnnotationTxn     = "fargo.gascity.dev/txn"
+	AnnotationOutcome = "fargo.gascity.dev/outcome"
 )
 
 // annotateWriter records the transaction id and outcome as annotations on the
@@ -42,7 +42,7 @@ func (w *annotateWriter) Record(ctx context.Context, ref reconcile.ObjRef, id st
 		return err
 	}
 	_, err = w.client.Resource(gvr).Namespace(ref.Namespace).Patch(
-		ctx, ref.Name, types.MergePatchType, data, metav1.PatchOptions{FieldManager: "rewind"})
+		ctx, ref.Name, types.MergePatchType, data, metav1.PatchOptions{FieldManager: "fargo"})
 	if err != nil {
 		return fmt.Errorf("annotate %s/%s: %w", ref.Namespace, ref.Name, err)
 	}
@@ -80,7 +80,7 @@ func (w *statusWriter) Record(ctx context.Context, ref reconcile.ObjRef, id stri
 	}
 	_ = unstructured.SetNestedField(obj.Object, outcomeToPhase(outcome), "status", "phase")
 	_ = unstructured.SetNestedField(obj.Object, id, "status", "txnId")
-	if _, err := ri.UpdateStatus(ctx, obj, metav1.UpdateOptions{FieldManager: "rewind"}); err != nil {
+	if _, err := ri.UpdateStatus(ctx, obj, metav1.UpdateOptions{FieldManager: "fargo"}); err != nil {
 		return fmt.Errorf("update transaction status %s/%s: %w", ref.Namespace, ref.Name, err)
 	}
 	return nil

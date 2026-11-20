@@ -1,6 +1,6 @@
-# rewind Helm chart
+# fargo Helm chart
 
-Deploys [rewind](https://github.com/luthermonson/rewind): a controller that
+Deploys [fargo](https://github.com/luthermonson/fargo): a controller that
 makes rollouts transactional on a k3s-on-beads cluster by bracketing each one
 in a scoped [kine](https://github.com/luthermonson/kine) transaction.
 
@@ -8,25 +8,25 @@ in a scoped [kine](https://github.com/luthermonson/kine) transaction.
 
 ```sh
 # argo mode, watching Applications in-cluster, talking to a kine over TCP
-helm install rewind charts/rewind \
-  --namespace rewind-system --create-namespace \
+helm install fargo charts/fargo \
+  --namespace fargo-system --create-namespace \
   --set mode=argo \
   --set kine.endpoint=http://192.168.5.2:2381 \
-  --set kine.tokenSecret.name=rewind-kine-token
+  --set kine.tokenSecret.name=fargo-kine-token
 ```
 
 The kine token and any kubeconfigs are read from **mounted Secrets** — the
 chart never inlines a secret value. Create the token Secret yourself:
 
 ```sh
-kubectl -n rewind-system create secret generic rewind-kine-token \
+kubectl -n fargo-system create secret generic fargo-kine-token \
   --from-file=token=/path/to/kine.token
 ```
 
 To watch a **remote** management cluster (Argo lives elsewhere), put its
 kubeconfig in a Secret and set `management.kubeconfigSecret.name`. For `argo`
 and `flux`, the target (managed) cluster is used for kind→resource discovery;
-set `target.kubeconfigSecret.name` if it differs from the cluster rewind runs
+set `target.kubeconfigSecret.name` if it differs from the cluster fargo runs
 in.
 
 ## RBAC granted per mode
@@ -35,7 +35,7 @@ in.
 |------|-----------------------------------------------------------|
 | `argo` | `argoproj.io/applications`: get, list, watch, patch |
 | `flux` | `kustomize.toolkit.fluxcd.io/kustomizations` and `helm.toolkit.fluxcd.io/helmreleases`: get, list, watch, patch |
-| `crd`  | `rewind.gascity.dev/transactions` (+ `/status`): get, list, watch, create, update, patch, delete |
+| `crd`  | `fargo.gascity.dev/transactions` (+ `/status`): get, list, watch, create, update, patch, delete |
 
 All modes also get `""/events` create+patch and `coordination.k8s.io/leases`
 for leader election. `crd` mode installs the `Transaction` CRD when
@@ -47,7 +47,7 @@ for leader election. `crd` mode installs the `Transaction` CRD when
 |-----|---------|-------------|
 | `mode` | `""` | **Required.** `argo`, `flux` or `crd`. |
 | `replicaCount` | `1` | Replicas (use `leaderElect` with >1). |
-| `image.repository` | `ghcr.io/luthermonson/rewind` | Image repo. |
+| `image.repository` | `ghcr.io/luthermonson/fargo` | Image repo. |
 | `image.tag` | `""` | Defaults to the chart `appVersion`. |
 | `image.pullPolicy` | `IfNotPresent` | |
 | `kine.endpoint` | `http://192.168.5.2:2381` | kine control API; `http://host:port` or `unix:///path/kine.sock`. |
@@ -64,7 +64,7 @@ for leader election. `crd` mode installs the `Transaction` CRD when
 | `dryRun` | `false` | Log begin/commit/rollback without sending. |
 | `metricsBindAddress` | `:8080` | `/metrics`, `/healthz`, `/readyz`. |
 | `leaderElect` | `true` | Leader election. |
-| `leaderElectId` | `""` | Lease name; defaults to `rewind-<mode>`. |
+| `leaderElectId` | `""` | Lease name; defaults to `fargo-<mode>`. |
 | `installCRD` | `true` | Install the Transaction CRD (crd mode only). |
 | `serviceAccount.create` | `true` | Create a ServiceAccount. |
 | `rbac.create` | `true` | Create the ClusterRole/Binding. |

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/luthermonson/rewind/pkg/txn"
+	"github.com/luthermonson/fargo/pkg/txn"
 )
 
 // FakeKine is an in-memory kine control API.

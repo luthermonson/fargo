@@ -3,7 +3,7 @@ package reconcile
 import (
 	"fmt"
 
-	"github.com/luthermonson/rewind/pkg/txn"
+	"github.com/luthermonson/fargo/pkg/txn"
 )
 
 // slogScope renders a short, log-friendly summary of a scope.

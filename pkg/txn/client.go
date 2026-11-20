@@ -1,5 +1,5 @@
 // Package txn is a client for the kine control API v0: the scoped-transaction
-// endpoints a rewind controller drives to make a rollout transactional
+// endpoints a fargo controller drives to make a rollout transactional
 // (POST /txn/begin, GET /txn/{id}, POST /txn/{id}/commit,
 // POST /txn/{id}/rollback, GET /txn). It speaks JSON over TCP or a unix
 // socket, with an optional bearer token.

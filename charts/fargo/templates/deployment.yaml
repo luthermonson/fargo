@@ -1,25 +1,25 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "rewind.fullname" . }}
+  name: {{ include "fargo.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "rewind.labels" . | nindent 4 }}
+    {{- include "fargo.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "rewind.selectorLabels" . | nindent 6 }}
+      {{- include "fargo.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "rewind.selectorLabels" . | nindent 8 }}
+        {{- include "fargo.selectorLabels" . | nindent 8 }}
       {{- with .Values.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "rewind.serviceAccountName" . }}
+      serviceAccountName: {{ include "fargo.serviceAccountName" . }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -27,7 +27,7 @@ spec:
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
-        - name: rewind
+        - name: fargo
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
@@ -45,16 +45,16 @@ spec:
             - --namespace={{ .Values.namespace }}
             {{- end }}
             {{- if .Values.kine.tokenSecret.name }}
-            - --kine-token-file=/etc/rewind/kine/{{ .Values.kine.tokenSecret.key }}
+            - --kine-token-file=/etc/fargo/kine/{{ .Values.kine.tokenSecret.key }}
             {{- end }}
             {{- if .Values.management.kubeconfigSecret.name }}
-            - --management-kubeconfig=/etc/rewind/management/{{ .Values.management.kubeconfigSecret.key }}
+            - --management-kubeconfig=/etc/fargo/management/{{ .Values.management.kubeconfigSecret.key }}
             {{- end }}
             {{- if .Values.management.context }}
             - --management-context={{ .Values.management.context }}
             {{- end }}
             {{- if and (ne .Values.mode "crd") .Values.target.kubeconfigSecret.name }}
-            - --target-kubeconfig=/etc/rewind/target/{{ .Values.target.kubeconfigSecret.key }}
+            - --target-kubeconfig=/etc/fargo/target/{{ .Values.target.kubeconfigSecret.key }}
             {{- end }}
           ports:
             - name: metrics
@@ -78,17 +78,17 @@ spec:
           volumeMounts:
             {{- if .Values.kine.tokenSecret.name }}
             - name: kine-token
-              mountPath: /etc/rewind/kine
+              mountPath: /etc/fargo/kine
               readOnly: true
             {{- end }}
             {{- if .Values.management.kubeconfigSecret.name }}
             - name: management-kubeconfig
-              mountPath: /etc/rewind/management
+              mountPath: /etc/fargo/management
               readOnly: true
             {{- end }}
             {{- if and (ne .Values.mode "crd") .Values.target.kubeconfigSecret.name }}
             - name: target-kubeconfig
-              mountPath: /etc/rewind/target
+              mountPath: /etc/fargo/target
               readOnly: true
             {{- end }}
       volumes:
