@@ -56,6 +56,11 @@ const (
 	SignalSucceeded
 	// SignalFailed means the rollout failed; roll back.
 	SignalFailed
+	// SignalInProgress means the rollout is applied but not yet healthy. It
+	// carries no action of its own; the engine uses it to re-adopt an open
+	// transaction (and re-arm its health deadline) after a controller restart,
+	// and to write back an outcome the ledger already holds.
+	SignalInProgress
 )
 
 // TxnClient is the subset of the kine control client the engine needs.
@@ -103,6 +108,10 @@ type Engine struct {
 	log    *slog.Logger
 	mu     sync.Mutex
 	active map[string]*track // id -> in-flight transaction
+	// recorded remembers the outcomes written back for ids that are no longer
+	// tracked, so a restarted controller patches a finished transaction's
+	// outcome once rather than on every object event.
+	recorded map[string]Outcome
 }
 
 type track struct {
@@ -126,7 +135,7 @@ func NewEngine(cfg Config) *Engine {
 	if cfg.afterFunc == nil {
 		cfg.afterFunc = func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) }
 	}
-	return &Engine{cfg: cfg, log: cfg.Logger, active: map[string]*track{}}
+	return &Engine{cfg: cfg, log: cfg.Logger, active: map[string]*track{}, recorded: map[string]Outcome{}}
 }
 
 // Handle drives one Signal to its kine effect. It is the single entry point
@@ -136,12 +145,64 @@ func (e *Engine) Handle(ctx context.Context, s Signal) error {
 	case SignalStarted:
 		return e.begin(ctx, s)
 	case SignalSucceeded:
-		return e.commit(ctx, s.ID)
+		return e.commit(ctx, s)
 	case SignalFailed:
-		return e.rollback(ctx, s.ID, s.Reason)
+		return e.rollback(ctx, s, s.Reason)
+	case SignalInProgress:
+		return e.adopt(ctx, s)
 	default:
 		return nil
 	}
+}
+
+// adopt handles an in-progress rollout the engine is not tracking: after a
+// restart the Running phase that would have begun the transaction is gone, so
+// the open transaction in the ledger is re-adopted here and its health
+// deadline re-armed (from now; the original start is not recoverable). A
+// transaction the ledger already closed gets its outcome written back once.
+func (e *Engine) adopt(ctx context.Context, s Signal) error {
+	if s.ID == "" {
+		return nil
+	}
+	e.mu.Lock()
+	_, tracked := e.active[s.ID]
+	_, done := e.recorded[s.ID]
+	e.mu.Unlock()
+	if tracked || done {
+		return nil
+	}
+	cur, err := e.cfg.Client.Get(ctx, s.ID)
+	if err != nil {
+		if txn.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	switch cur.State {
+	case txn.StateOpen:
+		e.log.Info("adopting open transaction for an in-progress rollout; re-arming the health deadline", "id", s.ID, "baseRev", cur.BaseRev)
+		e.register(s.ID, s.Ref, s.Scope)
+	case txn.StateCommitted:
+		e.recordOnce(ctx, s.Ref, s.ID, OutcomeCommitted)
+	case txn.StateRolledBack:
+		e.recordOnce(ctx, s.Ref, s.ID, OutcomeRolledBack)
+	}
+	return nil
+}
+
+// recordOnce writes a finished outcome back for an untracked id exactly once.
+func (e *Engine) recordOnce(ctx context.Context, ref ObjRef, id string, outcome Outcome) {
+	e.mu.Lock()
+	if _, ok := e.recorded[id]; ok {
+		e.mu.Unlock()
+		return
+	}
+	if len(e.recorded) > 4096 {
+		e.recorded = map[string]Outcome{}
+	}
+	e.recorded[id] = outcome
+	e.mu.Unlock()
+	e.record(ctx, ref, id, outcome)
 }
 
 func (e *Engine) begin(ctx context.Context, s Signal) error {
@@ -213,14 +274,15 @@ func (e *Engine) register(id string, ref ObjRef, scope txn.Scope) {
 		// deadline rollback must still try to run.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := e.rollback(ctx, id, "health deadline exceeded"); err != nil {
+		if err := e.rollback(ctx, Signal{Kind: SignalFailed, ID: id, Ref: ref}, "health deadline exceeded"); err != nil {
 			e.log.Error("deadline rollback failed", "id", id, "err", err)
 		}
 	})
 	e.active[id] = tr
 }
 
-func (e *Engine) commit(ctx context.Context, id string) error {
+func (e *Engine) commit(ctx context.Context, s Signal) error {
+	id := s.ID
 	if id == "" {
 		return nil
 	}
@@ -231,6 +293,7 @@ func (e *Engine) commit(ctx context.Context, id string) error {
 		return nil
 	}
 	e.mu.Unlock()
+	ref := e.refOr(id, s.Ref)
 
 	// Confirm state in the ledger before acting.
 	cur, err := e.cfg.Client.Get(ctx, id)
@@ -242,17 +305,21 @@ func (e *Engine) commit(ctx context.Context, id string) error {
 	}
 	switch cur.State {
 	case txn.StateCommitted:
+		// Already committed (by a previous instance, or a retry after the
+		// annotation write failed): make sure the outcome is written back.
 		e.finish(id)
+		e.recordOnce(ctx, ref, id, OutcomeCommitted)
 		return nil
 	case txn.StateRolledBack:
 		e.log.Warn("cannot commit a rolled-back transaction", "id", id)
 		e.finish(id)
+		e.recordOnce(ctx, ref, id, OutcomeRolledBack)
 		return nil
 	}
 
 	if e.cfg.DryRun {
 		e.log.Info("dry-run: would commit transaction", "id", id)
-		e.record(ctx, e.refOf(id), id, OutcomeCommitted)
+		e.record(ctx, ref, id, OutcomeCommitted)
 		e.finish(id)
 		return nil
 	}
@@ -262,13 +329,14 @@ func (e *Engine) commit(ctx context.Context, id string) error {
 		return err
 	}
 	e.log.Info("committed transaction", "id", t.ID)
-	e.record(ctx, e.refOf(id), id, OutcomeCommitted)
-	e.observe(func(o Observer) { o.Committed(t.ID) })
 	e.finish(id)
+	e.recordOnce(ctx, ref, id, OutcomeCommitted)
+	e.observe(func(o Observer) { o.Committed(t.ID) })
 	return nil
 }
 
-func (e *Engine) rollback(ctx context.Context, id, reason string) error {
+func (e *Engine) rollback(ctx context.Context, s Signal, reason string) error {
+	id := s.ID
 	if id == "" {
 		return nil
 	}
@@ -279,6 +347,7 @@ func (e *Engine) rollback(ctx context.Context, id, reason string) error {
 		return nil
 	}
 	e.mu.Unlock()
+	ref := e.refOr(id, s.Ref)
 
 	cur, err := e.cfg.Client.Get(ctx, id)
 	if err != nil {
@@ -292,15 +361,17 @@ func (e *Engine) rollback(ctx context.Context, id, reason string) error {
 		// never roll back a committed transaction
 		e.log.Warn("refusing to roll back a committed transaction", "id", id, "reason", reason)
 		e.finish(id)
+		e.recordOnce(ctx, ref, id, OutcomeCommitted)
 		return nil
 	case txn.StateRolledBack:
 		e.finish(id)
+		e.recordOnce(ctx, ref, id, OutcomeRolledBack)
 		return nil
 	}
 
 	if e.cfg.DryRun {
 		e.log.Info("dry-run: would roll back transaction", "id", id, "reason", reason)
-		e.record(ctx, e.refOf(id), id, OutcomeRolledBack)
+		e.record(ctx, ref, id, OutcomeRolledBack)
 		e.finish(id)
 		return nil
 	}
@@ -310,9 +381,9 @@ func (e *Engine) rollback(ctx context.Context, id, reason string) error {
 		return err
 	}
 	e.log.Info("rolled back transaction", "id", res.ID, "reason", reason, "events", res.Events, "freezeMs", res.FreezeMs, "reverted", len(res.Reverted))
-	e.record(ctx, e.refOf(id), id, OutcomeRolledBack)
-	e.observe(func(o Observer) { o.RolledBack(res.ID) })
 	e.finish(id)
+	e.recordOnce(ctx, ref, id, OutcomeRolledBack)
+	e.observe(func(o Observer) { o.RolledBack(res.ID) })
 	return nil
 }
 
@@ -336,6 +407,15 @@ func (e *Engine) refOf(id string) ObjRef {
 		return tr.ref
 	}
 	return ObjRef{}
+}
+
+// refOr returns the tracked ref for id, or the signal's own ref when the
+// engine is not tracking it (after a restart).
+func (e *Engine) refOr(id string, fallback ObjRef) ObjRef {
+	if r := e.refOf(id); r.Name != "" {
+		return r
+	}
+	return fallback
 }
 
 func (e *Engine) record(ctx context.Context, ref ObjRef, id string, outcome Outcome) {

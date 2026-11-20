@@ -6,6 +6,8 @@
 // auto. The transaction id uses status.operationState.operation.sync.revision.
 // Commit: phase == Succeeded followed by status.health.status == Healthy.
 // Rollback: phase Failed/Error, or health Degraded (deadline is the engine's).
+// In progress: phase Succeeded with any other health (the engine re-adopts an
+// open transaction on this after a restart).
 package argo
 
 import (
@@ -72,8 +74,9 @@ func (m *Mapper) Classify(obj *unstructured.Unstructured) (reconcile.Signal, err
 		case "Degraded":
 			return reconcile.Signal{Kind: reconcile.SignalFailed, ID: id, Ref: ref, Reason: "health Degraded after sync"}, nil
 		default:
-			// Synced but not yet Healthy: wait (engine deadline decides).
-			return reconcile.Signal{Kind: reconcile.SignalNone}, nil
+			// Synced but not yet Healthy: wait (engine deadline decides). The
+			// engine uses this to re-adopt an open transaction after a restart.
+			return reconcile.Signal{Kind: reconcile.SignalInProgress, ID: id, Ref: ref}, nil
 		}
 	case "Failed", "Error":
 		return reconcile.Signal{Kind: reconcile.SignalFailed, ID: id, Ref: ref, Reason: "operation phase " + phase}, nil

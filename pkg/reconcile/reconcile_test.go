@@ -229,3 +229,64 @@ func must(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+// recordingAnnotator captures outcome write-backs.
+type recordingAnnotator struct {
+	mu      sync.Mutex
+	records []string // "<id>=<outcome>"
+}
+
+func (a *recordingAnnotator) Record(_ context.Context, ref ObjRef, id string, outcome Outcome) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.records = append(a.records, ref.Name+":"+id+"="+string(outcome))
+	return nil
+}
+
+func TestInProgressAdoptsOpenTxnAndArmsDeadline(t *testing.T) {
+	e, fk, obs, timer := newTestEngine(t)
+	ctx := context.Background()
+	id := "argo/apps/podinfo/r1"
+	fk.Seed(id, txn.StateOpen)
+
+	// After a restart the controller only ever sees Succeeded+Progressing.
+	must(t, e.Handle(ctx, Signal{Kind: SignalInProgress, ID: id, Ref: ObjRef{Namespace: "apps", Name: "podinfo"}}))
+	if len(e.Active()) != 1 || *timer == nil {
+		t.Fatalf("open txn not adopted: active=%v timer=%v", e.Active(), *timer)
+	}
+	if b, _, _ := fk.Counts(id); b != 0 {
+		t.Fatalf("begin count = %d, want 0", b)
+	}
+	// A second in-progress event is a no-op.
+	must(t, e.Handle(ctx, Signal{Kind: SignalInProgress, ID: id}))
+	// The re-armed deadline rolls back.
+	(*timer).fire()
+	if st, _ := fk.State(id); st != txn.StateRolledBack {
+		t.Fatalf("state after deadline = %s, want rolledBack", st)
+	}
+	if obs.rolledBack != 1 {
+		t.Fatalf("rolledBack = %d, want 1", obs.rolledBack)
+	}
+}
+
+func TestFinishedTxnOutcomeIsRecordedOnceAfterRestart(t *testing.T) {
+	e, fk, _, _ := newTestEngine(t)
+	ann := &recordingAnnotator{}
+	e.cfg.Annotator = ann
+	ctx := context.Background()
+	id := "argo/apps/podinfo/r1"
+	fk.Seed(id, txn.StateCommitted)
+	ref := ObjRef{Namespace: "apps", Name: "podinfo"}
+
+	// Succeeded+Healthy for a transaction a previous instance committed: the
+	// outcome is written back (with the signal's ref), exactly once.
+	must(t, e.Handle(ctx, Signal{Kind: SignalSucceeded, ID: id, Ref: ref}))
+	must(t, e.Handle(ctx, Signal{Kind: SignalSucceeded, ID: id, Ref: ref}))
+	must(t, e.Handle(ctx, Signal{Kind: SignalInProgress, ID: id, Ref: ref}))
+	if len(ann.records) != 1 || ann.records[0] != "podinfo:"+id+"=committed" {
+		t.Fatalf("records = %v, want one committed write-back", ann.records)
+	}
+	if _, c, _ := fk.Counts(id); c != 0 {
+		t.Fatalf("commit count = %d, want 0 (ledger already committed)", c)
+	}
+}

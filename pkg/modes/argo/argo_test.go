@@ -117,8 +117,11 @@ func TestArgoSucceededNotYetHealthy(t *testing.T) {
       "metadata": {"name": "podinfo", "namespace": "argocd"},
       "status": {"operationState": {"phase": "Succeeded"}, "health": {"status": "Progressing"}}}`)
 	sig, _ := m.Classify(app)
-	if sig.Kind != reconcile.SignalNone {
-		t.Fatalf("synced-but-not-healthy should wait, got %v", sig.Kind)
+	if sig.Kind != reconcile.SignalInProgress {
+		t.Fatalf("synced-but-not-healthy should be in progress (no action, adoptable), got %v", sig.Kind)
+	}
+	if sig.ID == "" || sig.Ref.Name != "podinfo" {
+		t.Fatalf("in-progress signal must carry the id and ref: %+v", sig)
 	}
 }
 
