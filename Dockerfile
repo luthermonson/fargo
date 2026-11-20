@@ -5,9 +5,12 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG VERSION=dev
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+# TARGETOS/TARGETARCH are set by BuildKit from --platform (or the host). They
+# must not default to amd64: an amd64 binary on an arm64 node runs emulated and
+# segfaults in client-go under load.
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-$(go env GOOS)} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
     go build -trimpath -ldflags "-s -w -X github.com/luthermonson/rewind/pkg/version.Version=${VERSION}" \
     -o /out/rewind ./cmd/rewind
 
