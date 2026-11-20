@@ -1,0 +1,39 @@
+# goreleaser v2. `goreleaser release --snapshot --clean` builds locally; the
+# Makefile's `cross` target does the same without goreleaser.
+version: 2
+project_name: rewind
+builds:
+  - id: rewind
+    main: ./cmd/rewind
+    binary: rewind
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/luthermonson/rewind/pkg/version.Version={{.Version}}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE*
+      - config/crd/**/*
+checksum:
+  name_template: checksums.txt
+dockers:
+  - image_templates:
+      - "ghcr.io/luthermonson/rewind:{{ .Version }}"
+      - "ghcr.io/luthermonson/rewind:latest"
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--build-arg=VERSION={{ .Version }}"
+changelog:
+  use: git
+release:
+  draft: true

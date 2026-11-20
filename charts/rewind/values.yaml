@@ -1,0 +1,86 @@
+# rewind Helm values. Every CLI flag has a value here; the Deployment reads
+# kubeconfigs and the kine token from mounted Secrets, so swapping the
+# management cluster or the kine address is a values change plus a rollout.
+
+# Which deployment system to watch: argo | flux | crd. Required.
+mode: ""
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/luthermonson/rewind
+  tag: ""            # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# --- kine control API -------------------------------------------------------
+kine:
+  # http://host:port or unix:///path/kine.sock
+  endpoint: "http://192.168.5.2:2381"
+  # Existing Secret holding the bearer token. Never inline the token here.
+  tokenSecret:
+    name: ""        # e.g. rewind-kine-token; empty = no token (unix socket)
+    key: token
+
+# --- management cluster -----------------------------------------------------
+# Where Applications / Kustomizations / HelmReleases / Transactions are watched.
+# Leave managementKubeconfig.secret empty to use the in-cluster config.
+management:
+  kubeconfigSecret:
+    name: ""        # existing Secret with a kubeconfig; empty = in-cluster
+    key: kubeconfig
+  context: ""       # optional context within that kubeconfig
+
+# --- target cluster (argo/flux only) ----------------------------------------
+# The managed cluster, used for kind->resource discovery. Empty = in-cluster.
+target:
+  kubeconfigSecret:
+    name: ""
+    key: kubeconfig
+
+# --- behaviour --------------------------------------------------------------
+healthDeadline: 5m
+namespaceScope: auto    # auto | none
+namespace: ""           # namespace to watch (empty = all)
+dryRun: false
+metricsBindAddress: ":8080"
+
+leaderElect: true
+leaderElectId: ""       # defaults to rewind-<mode>
+
+# Install the Transaction CRD (crd mode). Ignored for argo/flux.
+installCRD: true
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+# PodSecurity-restricted-friendly defaults.
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}

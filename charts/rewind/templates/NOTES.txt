@@ -1,0 +1,19 @@
+rewind is installed in mode "{{ .Values.mode }}".
+
+Watching for rollouts and bracketing each in a kine transaction at:
+  {{ .Values.kine.endpoint }}
+
+{{- if .Values.dryRun }}
+
+DRY-RUN is on: begin/commit/rollback are logged, not sent. Set dryRun=false to act.
+{{- end }}
+{{- if not .Values.kine.tokenSecret.name }}
+
+No kine token Secret is set (kine.tokenSecret.name). This is fine for a unix
+socket; for a TCP endpoint behind a bearer token, create a Secret and set it.
+{{- end }}
+
+Check it:
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "rewind.fullname" . }} -f
+  kubectl -n {{ .Release.Namespace }} port-forward deploy/{{ include "rewind.fullname" . }} 8080 &
+  curl -s localhost:8080/metrics | grep rewind_

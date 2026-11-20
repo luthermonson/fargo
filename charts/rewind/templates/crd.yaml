@@ -1,0 +1,103 @@
+{{- if and (eq .Values.mode "crd") .Values.installCRD }}
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: transactions.rewind.gascity.dev
+spec:
+  group: rewind.gascity.dev
+  scope: Namespaced
+  names:
+    kind: Transaction
+    listKind: TransactionList
+    plural: transactions
+    singular: transaction
+    shortNames:
+      - txn
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: TxnID
+          type: string
+          jsonPath: .status.txnId
+        - name: Outcome
+          type: string
+          jsonPath: .spec.outcome
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: >-
+            Transaction brackets a change to a k3s-on-beads cluster in a scoped
+            kine transaction. Creating one begins the transaction; setting
+            spec.outcome commits or rolls it back; deleting it while open rolls
+            it back.
+          properties:
+            spec:
+              type: object
+              required:
+                - scope
+              properties:
+                scope:
+                  type: object
+                  description: The set of keys the transaction may revert.
+                  properties:
+                    keys:
+                      type: array
+                      description: >-
+                        Exact scope keys as group/resource/namespace/name (or
+                        resource/namespace/name for the core group).
+                      items:
+                        type: string
+                    prefixes:
+                      type: array
+                      description: Key prefixes; any key starting with one is in scope.
+                      items:
+                        type: string
+                    namespaces:
+                      type: array
+                      description: Whole namespaces to include in scope.
+                      items:
+                        type: string
+                    expandOwners:
+                      type: boolean
+                      description: >-
+                        Also include keys whose owner chain reaches an in-scope
+                        key at rollback time.
+                outcome:
+                  type: string
+                  description: >-
+                    Set to commit or rollback to finish the transaction. Empty
+                    leaves it open.
+                  enum:
+                    - ""
+                    - commit
+                    - rollback
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  description: Pending, Open, Committed, RolledBack or Failed.
+                  enum:
+                    - Pending
+                    - Open
+                    - Committed
+                    - RolledBack
+                    - Failed
+                txnId:
+                  type: string
+                baseRev:
+                  type: integer
+                  format: int64
+                message:
+                  type: string
+{{- end }}

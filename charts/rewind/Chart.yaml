@@ -1,0 +1,18 @@
+apiVersion: v2
+name: rewind
+description: Transactional deployments on a k3s-on-beads cluster — begin a scoped kine transaction when a rollout starts, commit on healthy, roll back on failure.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/luthermonson/rewind
+sources:
+  - https://github.com/luthermonson/rewind
+keywords:
+  - kubernetes
+  - gitops
+  - argo
+  - flux
+  - rollback
+  - kine
+maintainers:
+  - name: Luther Monson

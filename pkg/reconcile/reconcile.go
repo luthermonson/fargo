@@ -1,0 +1,366 @@
+// Package reconcile holds the mode-independent engine that drives a rollout
+// through the kine transaction lifecycle: begin when a rollout starts, wait
+// for health, commit when healthy, roll back on failure or deadline. It is
+// idempotent against the ledger (GET /txn/{id} before begin) so a controller
+// restart never double-begins or rolls back a committed transaction.
+package reconcile
+
+import (
+	"context"
+	"log/slog"
+	"sync"
+	"time"
+
+	"github.com/luthermonson/rewind/pkg/txn"
+)
+
+// Outcome is the annotation/label value recorded against a watched object.
+type Outcome string
+
+const (
+	OutcomeOpen       Outcome = "open"
+	OutcomeCommitted  Outcome = "committed"
+	OutcomeRolledBack Outcome = "rolledBack"
+)
+
+// ObjRef locates the watched object so the engine can write an outcome back.
+// The GVR fields identify the resource (filled by the mode) so an annotator
+// can address the object without a second lookup.
+type ObjRef struct {
+	Namespace   string
+	Name        string
+	GVRGroup    string
+	GVRVersion  string
+	GVRResource string
+}
+
+// Signal is a rollout event mapped from a deployment system's object. Modes
+// produce Signals; the engine turns them into kine calls.
+type Signal struct {
+	Kind   SignalKind
+	ID     string
+	Ref    ObjRef
+	Scope  txn.Scope
+	Reason string
+}
+
+// SignalKind enumerates the rollout events an engine reacts to.
+type SignalKind int
+
+const (
+	// SignalNone means the object carries no actionable rollout state.
+	SignalNone SignalKind = iota
+	// SignalStarted means a rollout began; open a transaction.
+	SignalStarted
+	// SignalSucceeded means the rollout is healthy; commit.
+	SignalSucceeded
+	// SignalFailed means the rollout failed; roll back.
+	SignalFailed
+)
+
+// TxnClient is the subset of the kine control client the engine needs.
+type TxnClient interface {
+	Begin(ctx context.Context, id string, scope txn.Scope) (*txn.Transaction, error)
+	Get(ctx context.Context, id string) (*txn.Transaction, error)
+	Commit(ctx context.Context, id string) (*txn.Transaction, error)
+	Rollback(ctx context.Context, id string) (*txn.RollbackResult, error)
+}
+
+// Annotator records a transaction outcome back onto the watched object. For
+// argo/flux this patches annotations; for crd it updates status. A nil
+// Annotator (or dry-run) makes the engine skip write-back.
+type Annotator interface {
+	Record(ctx context.Context, ref ObjRef, id string, outcome Outcome) error
+}
+
+// Observer receives counts of engine actions, for metrics. All methods may be
+// called concurrently; a nil Observer is ignored.
+type Observer interface {
+	Begun(id string)
+	Committed(id string)
+	RolledBack(id string)
+	Errored(id string)
+}
+
+// Config configures an Engine.
+type Config struct {
+	Client         TxnClient
+	Annotator      Annotator
+	Observer       Observer
+	HealthDeadline time.Duration
+	DryRun         bool
+	Logger         *slog.Logger
+	// now and afterFunc are injectable for tests; nil uses the real clock.
+	now       func() time.Time
+	afterFunc func(time.Duration, func()) stopper
+}
+
+type stopper interface{ Stop() bool }
+
+// Engine drives transactions. It is safe for concurrent use.
+type Engine struct {
+	cfg    Config
+	log    *slog.Logger
+	mu     sync.Mutex
+	active map[string]*track // id -> in-flight transaction
+}
+
+type track struct {
+	ref      ObjRef
+	scope    txn.Scope
+	deadline stopper
+	done     bool // committed or rolled back locally
+}
+
+// NewEngine builds an Engine.
+func NewEngine(cfg Config) *Engine {
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	if cfg.HealthDeadline <= 0 {
+		cfg.HealthDeadline = 5 * time.Minute
+	}
+	if cfg.now == nil {
+		cfg.now = time.Now
+	}
+	if cfg.afterFunc == nil {
+		cfg.afterFunc = func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) }
+	}
+	return &Engine{cfg: cfg, log: cfg.Logger, active: map[string]*track{}}
+}
+
+// Handle drives one Signal to its kine effect. It is the single entry point
+// every mode funnels events through.
+func (e *Engine) Handle(ctx context.Context, s Signal) error {
+	switch s.Kind {
+	case SignalStarted:
+		return e.begin(ctx, s)
+	case SignalSucceeded:
+		return e.commit(ctx, s.ID)
+	case SignalFailed:
+		return e.rollback(ctx, s.ID, s.Reason)
+	default:
+		return nil
+	}
+}
+
+func (e *Engine) begin(ctx context.Context, s Signal) error {
+	if s.ID == "" {
+		return nil
+	}
+	e.mu.Lock()
+	if _, ok := e.active[s.ID]; ok {
+		e.mu.Unlock()
+		return nil // already tracking; never begin twice for one rollout id
+	}
+	e.mu.Unlock()
+
+	// Idempotency via the ledger: a restart must not double-begin, and must
+	// pick up a transaction opened by a previous controller instance.
+	existing, err := e.cfg.Client.Get(ctx, s.ID)
+	if err != nil && !txn.IsNotFound(err) {
+		return err
+	}
+	if existing != nil && err == nil {
+		switch existing.State {
+		case txn.StateCommitted, txn.StateRolledBack:
+			e.log.Info("transaction already finished; skipping begin", "id", s.ID, "state", existing.State)
+			return nil
+		case txn.StateOpen:
+			e.log.Info("adopting open transaction after restart", "id", s.ID, "baseRev", existing.BaseRev)
+			e.register(s.ID, s.Ref, s.Scope)
+			e.record(ctx, s.Ref, s.ID, OutcomeOpen)
+			return nil
+		}
+	}
+
+	if e.cfg.DryRun {
+		e.log.Info("dry-run: would begin transaction", "id", s.ID, "scope", scopeSummary(s.Scope))
+		e.register(s.ID, s.Ref, s.Scope)
+		return nil
+	}
+
+	t, err := e.cfg.Client.Begin(ctx, s.ID, s.Scope)
+	if err != nil {
+		if txn.IsConflict(err) {
+			e.log.Warn("begin conflicts with an open transaction; scope overlap", "id", s.ID, "err", err)
+		}
+		return err
+	}
+	e.log.Info("began transaction", "id", t.ID, "baseRev", t.BaseRev, "baseCommit", t.BaseCommit, "scope", scopeSummary(s.Scope))
+	e.register(s.ID, s.Ref, s.Scope)
+	e.record(ctx, s.Ref, s.ID, OutcomeOpen)
+	e.observe(func(o Observer) { o.Begun(t.ID) })
+	return nil
+}
+
+func (e *Engine) observe(f func(Observer)) {
+	if e.cfg.Observer != nil {
+		f(e.cfg.Observer)
+	}
+}
+
+// register starts tracking an open transaction and arms its health deadline.
+func (e *Engine) register(id string, ref ObjRef, scope txn.Scope) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if _, ok := e.active[id]; ok {
+		return
+	}
+	tr := &track{ref: ref, scope: scope}
+	tr.deadline = e.cfg.afterFunc(e.cfg.HealthDeadline, func() {
+		// A fresh context: the informer context may be mid-shutdown, but a
+		// deadline rollback must still try to run.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := e.rollback(ctx, id, "health deadline exceeded"); err != nil {
+			e.log.Error("deadline rollback failed", "id", id, "err", err)
+		}
+	})
+	e.active[id] = tr
+}
+
+func (e *Engine) commit(ctx context.Context, id string) error {
+	if id == "" {
+		return nil
+	}
+	e.mu.Lock()
+	tr := e.active[id]
+	if tr != nil && tr.done {
+		e.mu.Unlock()
+		return nil
+	}
+	e.mu.Unlock()
+
+	// Confirm state in the ledger before acting.
+	cur, err := e.cfg.Client.Get(ctx, id)
+	if err != nil {
+		if txn.IsNotFound(err) {
+			return nil // nothing was begun
+		}
+		return err
+	}
+	switch cur.State {
+	case txn.StateCommitted:
+		e.finish(id)
+		return nil
+	case txn.StateRolledBack:
+		e.log.Warn("cannot commit a rolled-back transaction", "id", id)
+		e.finish(id)
+		return nil
+	}
+
+	if e.cfg.DryRun {
+		e.log.Info("dry-run: would commit transaction", "id", id)
+		e.record(ctx, e.refOf(id), id, OutcomeCommitted)
+		e.finish(id)
+		return nil
+	}
+
+	t, err := e.cfg.Client.Commit(ctx, id)
+	if err != nil {
+		return err
+	}
+	e.log.Info("committed transaction", "id", t.ID)
+	e.record(ctx, e.refOf(id), id, OutcomeCommitted)
+	e.observe(func(o Observer) { o.Committed(t.ID) })
+	e.finish(id)
+	return nil
+}
+
+func (e *Engine) rollback(ctx context.Context, id, reason string) error {
+	if id == "" {
+		return nil
+	}
+	e.mu.Lock()
+	tr := e.active[id]
+	if tr != nil && tr.done {
+		e.mu.Unlock()
+		return nil
+	}
+	e.mu.Unlock()
+
+	cur, err := e.cfg.Client.Get(ctx, id)
+	if err != nil {
+		if txn.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	switch cur.State {
+	case txn.StateCommitted:
+		// never roll back a committed transaction
+		e.log.Warn("refusing to roll back a committed transaction", "id", id, "reason", reason)
+		e.finish(id)
+		return nil
+	case txn.StateRolledBack:
+		e.finish(id)
+		return nil
+	}
+
+	if e.cfg.DryRun {
+		e.log.Info("dry-run: would roll back transaction", "id", id, "reason", reason)
+		e.record(ctx, e.refOf(id), id, OutcomeRolledBack)
+		e.finish(id)
+		return nil
+	}
+
+	res, err := e.cfg.Client.Rollback(ctx, id)
+	if err != nil {
+		return err
+	}
+	e.log.Info("rolled back transaction", "id", res.ID, "reason", reason, "events", res.Events, "freezeMs", res.FreezeMs, "reverted", len(res.Reverted))
+	e.record(ctx, e.refOf(id), id, OutcomeRolledBack)
+	e.observe(func(o Observer) { o.RolledBack(res.ID) })
+	e.finish(id)
+	return nil
+}
+
+// finish marks a tracked transaction done and cancels its deadline timer.
+func (e *Engine) finish(id string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if tr, ok := e.active[id]; ok {
+		if tr.deadline != nil {
+			tr.deadline.Stop()
+		}
+		tr.done = true
+		delete(e.active, id)
+	}
+}
+
+func (e *Engine) refOf(id string) ObjRef {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if tr, ok := e.active[id]; ok {
+		return tr.ref
+	}
+	return ObjRef{}
+}
+
+func (e *Engine) record(ctx context.Context, ref ObjRef, id string, outcome Outcome) {
+	if e.cfg.Annotator == nil || e.cfg.DryRun {
+		return
+	}
+	if ref.Name == "" {
+		return
+	}
+	if err := e.cfg.Annotator.Record(ctx, ref, id, outcome); err != nil {
+		e.log.Warn("failed to record outcome on object", "id", id, "outcome", outcome, "err", err)
+	}
+}
+
+// Active returns the ids currently being tracked (for metrics/tests).
+func (e *Engine) Active() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]string, 0, len(e.active))
+	for id := range e.active {
+		out = append(out, id)
+	}
+	return out
+}
+
+func scopeSummary(s txn.Scope) string {
+	return slogScope(s)
+}

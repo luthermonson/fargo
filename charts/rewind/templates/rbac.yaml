@@ -1,0 +1,55 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "rewind.fullname" . }}
+  labels:
+    {{- include "rewind.labels" . | nindent 4 }}
+rules:
+  # --- common to every mode ---
+  # Record events on what we act on.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # Leader-election leases.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+{{- if eq .Values.mode "argo" }}
+  # --- argo mode: read + annotate Applications ---
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list", "watch", "patch"]
+{{- else if eq .Values.mode "flux" }}
+  # --- flux mode: read + annotate Kustomizations and HelmReleases ---
+  - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+    resources: ["kustomizations"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["helm.toolkit.fluxcd.io"]
+    resources: ["helmreleases"]
+    verbs: ["get", "list", "watch", "patch"]
+{{- else if eq .Values.mode "crd" }}
+  # --- crd mode: full control of Transactions and their status ---
+  - apiGroups: ["rewind.gascity.dev"]
+    resources: ["transactions"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["rewind.gascity.dev"]
+    resources: ["transactions/status"]
+    verbs: ["get", "update", "patch"]
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "rewind.fullname" . }}
+  labels:
+    {{- include "rewind.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "rewind.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "rewind.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

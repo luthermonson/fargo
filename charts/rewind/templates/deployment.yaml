@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rewind.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rewind.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "rewind.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rewind.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "rewind.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: rewind
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --mode={{ required "values.mode is required (argo|flux|crd)" .Values.mode }}
+            - --kine-endpoint={{ .Values.kine.endpoint }}
+            - --health-deadline={{ .Values.healthDeadline }}
+            - --namespace-scope={{ .Values.namespaceScope }}
+            - --metrics-bind-address={{ .Values.metricsBindAddress }}
+            - --dry-run={{ .Values.dryRun }}
+            - --leader-elect={{ .Values.leaderElect }}
+            {{- if .Values.leaderElectId }}
+            - --leader-elect-id={{ .Values.leaderElectId }}
+            {{- end }}
+            {{- if .Values.namespace }}
+            - --namespace={{ .Values.namespace }}
+            {{- end }}
+            {{- if .Values.kine.tokenSecret.name }}
+            - --kine-token-file=/etc/rewind/kine/{{ .Values.kine.tokenSecret.key }}
+            {{- end }}
+            {{- if .Values.management.kubeconfigSecret.name }}
+            - --management-kubeconfig=/etc/rewind/management/{{ .Values.management.kubeconfigSecret.key }}
+            {{- end }}
+            {{- if .Values.management.context }}
+            - --management-context={{ .Values.management.context }}
+            {{- end }}
+            {{- if and (ne .Values.mode "crd") .Values.target.kubeconfigSecret.name }}
+            - --target-kubeconfig=/etc/rewind/target/{{ .Values.target.kubeconfigSecret.key }}
+            {{- end }}
+          ports:
+            - name: metrics
+              containerPort: {{ (regexReplaceAll "^.*:" .Values.metricsBindAddress "") | int }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.kine.tokenSecret.name }}
+            - name: kine-token
+              mountPath: /etc/rewind/kine
+              readOnly: true
+            {{- end }}
+            {{- if .Values.management.kubeconfigSecret.name }}
+            - name: management-kubeconfig
+              mountPath: /etc/rewind/management
+              readOnly: true
+            {{- end }}
+            {{- if and (ne .Values.mode "crd") .Values.target.kubeconfigSecret.name }}
+            - name: target-kubeconfig
+              mountPath: /etc/rewind/target
+              readOnly: true
+            {{- end }}
+      volumes:
+        {{- if .Values.kine.tokenSecret.name }}
+        - name: kine-token
+          secret:
+            secretName: {{ .Values.kine.tokenSecret.name }}
+        {{- end }}
+        {{- if .Values.management.kubeconfigSecret.name }}
+        - name: management-kubeconfig
+          secret:
+            secretName: {{ .Values.management.kubeconfigSecret.name }}
+        {{- end }}
+        {{- if and (ne .Values.mode "crd") .Values.target.kubeconfigSecret.name }}
+        - name: target-kubeconfig
+          secret:
+            secretName: {{ .Values.target.kubeconfigSecret.name }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,28 @@
+# A rewind Transaction. Creating this opens a scoped kine savepoint; apply your
+# change; then set spec.outcome to commit or rollback (or kubectl delete it
+# while Open to roll back).
+#
+#   kubectl apply -f transaction.yaml         # begins the transaction
+#   kubectl -n ci patch transaction deploy-podinfo --type=merge \
+#     -p '{"spec":{"outcome":"commit"}}'      # or "rollback"
+#
+# Watch it:
+#   kubectl -n ci get transactions
+apiVersion: rewind.gascity.dev/v1alpha1
+kind: Transaction
+metadata:
+  name: deploy-podinfo
+  namespace: ci
+spec:
+  # Everything the rollout may touch. Keys are
+  # group/resource/namespace/name (or resource/namespace/name for core).
+  scope:
+    keys:
+      - apps/deployments/demo/podinfo
+      - services/demo/podinfo
+      - configmaps/demo/podinfo-config
+    namespaces:
+      - demo
+    expandOwners: true
+  # "" leaves it open; set to commit or rollback to finish.
+  outcome: ""

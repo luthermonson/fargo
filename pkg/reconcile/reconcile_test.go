@@ -1,0 +1,231 @@
+package reconcile
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/luthermonson/rewind/pkg/txn"
+	"github.com/luthermonson/rewind/pkg/txntest"
+)
+
+// fakeTimer is an injectable afterFunc that captures the fired callback so a
+// test can trigger the health deadline deterministically.
+type fakeTimer struct {
+	mu      sync.Mutex
+	fire    func()
+	stopped bool
+}
+
+func (t *fakeTimer) Stop() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.stopped = true
+	return true
+}
+
+type countingObserver struct {
+	mu                           sync.Mutex
+	begun, committed, rolledBack int
+}
+
+func (o *countingObserver) Begun(string)      { o.mu.Lock(); o.begun++; o.mu.Unlock() }
+func (o *countingObserver) Committed(string)  { o.mu.Lock(); o.committed++; o.mu.Unlock() }
+func (o *countingObserver) RolledBack(string) { o.mu.Lock(); o.rolledBack++; o.mu.Unlock() }
+func (o *countingObserver) Errored(string)    {}
+
+func newTestEngine(t *testing.T) (*Engine, *txntest.FakeKine, *countingObserver, **fakeTimer) {
+	t.Helper()
+	fk := txntest.New("")
+	srv := fk.Server()
+	t.Cleanup(srv.Close)
+	client, err := txn.New(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obs := &countingObserver{}
+	var lastTimer *fakeTimer
+	cfg := Config{
+		Client:         client,
+		Observer:       obs,
+		HealthDeadline: time.Hour,
+		afterFunc: func(_ time.Duration, f func()) stopper {
+			ft := &fakeTimer{fire: f}
+			lastTimer = ft
+			return ft
+		},
+	}
+	return NewEngine(cfg), fk, obs, &lastTimer
+}
+
+func started(id string) Signal {
+	return Signal{Kind: SignalStarted, ID: id, Ref: ObjRef{Namespace: "apps", Name: "podinfo"},
+		Scope: txn.Scope{Keys: []string{"apps/deployments/apps/podinfo"}}}
+}
+
+func TestBeginOnlyOnce(t *testing.T) {
+	e, fk, obs, _ := newTestEngine(t)
+	ctx := context.Background()
+	id := "argo/apps/podinfo/r1"
+
+	for i := 0; i < 3; i++ {
+		if err := e.Handle(ctx, started(id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if b, _, _ := fk.Counts(id); b != 1 {
+		t.Fatalf("begin count = %d, want 1", b)
+	}
+	if obs.begun != 1 {
+		t.Fatalf("observer begun = %d, want 1", obs.begun)
+	}
+}
+
+func TestCommitOnHealthy(t *testing.T) {
+	e, fk, obs, _ := newTestEngine(t)
+	ctx := context.Background()
+	id := "argo/apps/podinfo/r1"
+
+	must(t, e.Handle(ctx, started(id)))
+	must(t, e.Handle(ctx, Signal{Kind: SignalSucceeded, ID: id}))
+
+	if st, _ := fk.State(id); st != txn.StateCommitted {
+		t.Fatalf("state = %s, want committed", st)
+	}
+	if obs.committed != 1 {
+		t.Fatalf("committed = %d, want 1", obs.committed)
+	}
+	// A second commit is a no-op.
+	must(t, e.Handle(ctx, Signal{Kind: SignalSucceeded, ID: id}))
+	if _, c, _ := fk.Counts(id); c != 1 {
+		t.Fatalf("commit count = %d, want 1", c)
+	}
+}
+
+func TestRollbackOnFailed(t *testing.T) {
+	e, fk, obs, _ := newTestEngine(t)
+	ctx := context.Background()
+	id := "flux/apps/podinfo/r1"
+
+	must(t, e.Handle(ctx, started(id)))
+	must(t, e.Handle(ctx, Signal{Kind: SignalFailed, ID: id, Reason: "ImagePullBackOff"}))
+
+	if st, _ := fk.State(id); st != txn.StateRolledBack {
+		t.Fatalf("state = %s, want rolledBack", st)
+	}
+	if obs.rolledBack != 1 {
+		t.Fatalf("rolledBack = %d, want 1", obs.rolledBack)
+	}
+}
+
+func TestRollbackOnDeadline(t *testing.T) {
+	e, fk, obs, timer := newTestEngine(t)
+	ctx := context.Background()
+	id := "argo/apps/podinfo/r1"
+
+	must(t, e.Handle(ctx, started(id)))
+	if *timer == nil {
+		t.Fatal("deadline timer was not armed on begin")
+	}
+	// Fire the health deadline.
+	(*timer).fire()
+
+	if st, _ := fk.State(id); st != txn.StateRolledBack {
+		t.Fatalf("state = %s, want rolledBack after deadline", st)
+	}
+	if obs.rolledBack != 1 {
+		t.Fatalf("rolledBack = %d, want 1", obs.rolledBack)
+	}
+}
+
+func TestDeadlineCancelledAfterCommit(t *testing.T) {
+	e, fk, _, timer := newTestEngine(t)
+	ctx := context.Background()
+	id := "argo/apps/podinfo/r1"
+
+	must(t, e.Handle(ctx, started(id)))
+	must(t, e.Handle(ctx, Signal{Kind: SignalSucceeded, ID: id}))
+
+	if !(*timer).stopped {
+		t.Fatal("deadline timer should be stopped after commit")
+	}
+	// Firing a stale timer must not roll back a committed transaction.
+	(*timer).fire()
+	if st, _ := fk.State(id); st != txn.StateCommitted {
+		t.Fatalf("state = %s, want committed (stale deadline must not roll back)", st)
+	}
+}
+
+func TestIdempotentRestartAdoptsOpenTxn(t *testing.T) {
+	e, fk, _, _ := newTestEngine(t)
+	ctx := context.Background()
+	id := "argo/apps/podinfo/r1"
+
+	// A previous controller instance already opened this transaction.
+	fk.Seed(id, txn.StateOpen)
+
+	// The restarted controller sees the same rollout: it must NOT begin again.
+	must(t, e.Handle(ctx, started(id)))
+	if b, _, _ := fk.Counts(id); b != 0 {
+		t.Fatalf("begin count = %d, want 0 (adopted existing open txn)", b)
+	}
+	// It should still drive the adopted transaction to completion.
+	must(t, e.Handle(ctx, Signal{Kind: SignalSucceeded, ID: id}))
+	if st, _ := fk.State(id); st != txn.StateCommitted {
+		t.Fatalf("state = %s, want committed", st)
+	}
+}
+
+func TestNeverBeginFinishedTxn(t *testing.T) {
+	e, fk, _, _ := newTestEngine(t)
+	ctx := context.Background()
+	id := "argo/apps/podinfo/r1"
+	fk.Seed(id, txn.StateCommitted)
+
+	must(t, e.Handle(ctx, started(id)))
+	if b, _, _ := fk.Counts(id); b != 0 {
+		t.Fatalf("begin count = %d, want 0 (already committed)", b)
+	}
+}
+
+func TestNeverRollbackCommitted(t *testing.T) {
+	e, fk, obs, _ := newTestEngine(t)
+	ctx := context.Background()
+	id := "argo/apps/podinfo/r1"
+	fk.Seed(id, txn.StateCommitted)
+
+	must(t, e.Handle(ctx, Signal{Kind: SignalFailed, ID: id, Reason: "late failure"}))
+	if _, _, rb := fk.Counts(id); rb != 0 {
+		t.Fatalf("rollback count = %d, want 0 (must never roll back a committed txn)", rb)
+	}
+	if st, _ := fk.State(id); st != txn.StateCommitted {
+		t.Fatalf("state = %s, want committed", st)
+	}
+	if obs.rolledBack != 0 {
+		t.Fatalf("rolledBack = %d, want 0", obs.rolledBack)
+	}
+}
+
+func TestDryRunSendsNothing(t *testing.T) {
+	fk := txntest.New("")
+	srv := fk.Server()
+	t.Cleanup(srv.Close)
+	client, _ := txn.New(srv.URL)
+	e := NewEngine(Config{Client: client, DryRun: true, HealthDeadline: time.Hour})
+	ctx := context.Background()
+	id := "argo/apps/podinfo/r1"
+
+	must(t, e.Handle(ctx, started(id)))
+	must(t, e.Handle(ctx, Signal{Kind: SignalSucceeded, ID: id}))
+	if b, c, _ := fk.Counts(id); b != 0 || c != 0 {
+		t.Fatalf("dry-run sent calls: begin=%d commit=%d", b, c)
+	}
+}
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
